@@ -451,9 +451,37 @@ $(function() {
     }
   }
 
+  var diagramWorker = null;
+  var diagramNode = null;
+  function renderDiagram(results) {
+    if (!diagramWorker) {
+      diagramWorker = new Worker("/static/js/diagram-worker.js");
+      diagramWorker.onmessage = function(evt) {
+
+        if (evt.data.type === "svg") {
+          diagramNode.innerHTML = evt.data.svgStr;
+        } else if (evt.data.type === "debug") {
+          console.log("got debug message from worker:", evt.data);
+        }
+      };
+
+      // While this is a hacky feature, dynamically cram our div into place.
+      // (Also, I forget the jQuery idioms; using plain dom for now.)
+      var contentNode = document.getElementById('content');
+      diagramNode = document.createElement('div');
+      // matching style hacks because of the search box.
+      diagramNode.setAttribute(
+        "style", "margin-top: 70px; margin-bottom: -70px;");
+      contentNode.parentNode.insertBefore(diagramNode, contentNode)
+    }
+    console.log("sending worker results:", results);
+    diagramWorker.postMessage({ type: "results", results: results});
+  }
+
   window.showSearchResults = function(results) {
     var jumpToSingle = window.location.search.indexOf("&redirect=false") == -1;
     populateResults(results, true, jumpToSingle);
+    renderDiagram(results);
   };
 
   /**
@@ -502,6 +530,7 @@ $(function() {
       if (myRequestNumber > displayedRequestNumber) {
         displayedRequestNumber = myRequestNumber;
         populateResults(data, false, false);
+        renderDiagram(data);
         historyWaiter = setTimeout(pushHistoryState, timeouts.history, searchUrl);
       }
       oneFewerRequest();
