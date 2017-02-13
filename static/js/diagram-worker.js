@@ -20,12 +20,16 @@ self.addEventListener("message", processMessage);
  *
  * Each method/field has a separately tracked declaration/definition slot.
  */
-function DiagramClass(namespace, className) {
+function DiagramClass(namespace, className, qname) {
   this.namespace = namespace;
   this.name = className;
+  this.qname = qname;
 
   // TODO: slurp the general path info into here from when our slots get a
   // definition/declaration.
+  this.filename = null;
+  this.path = null;
+  this.pathParts = null;
 
   this._slotsByName = new Map();
   // Maintain list of slot names so that we can easily sort. when rendering to
@@ -33,6 +37,15 @@ function DiagramClass(namespace, className) {
   this._slotNames = [];
 }
 DiagramClass.prototype = {
+  maybeUsePathInfo: function(path, lineInfo) {
+    if (!this.filename) {
+      var iLastSlash = path.lastIndexOf('/');
+      this.path = path.substring(0, iLastSlash);
+      this.pathParts = this.path.split('/');
+      this.filename = path.substring(iLastSlash + 1);
+    }
+  },
+
   /**
    * Get-or-create the DiagramClassSlot with the given name.  null is an
    * acceptable name for cases where we aren't dealing with a class but a
@@ -75,8 +88,27 @@ DiagramClass.prototype = {
     // order.
     this._slotNames.sort();
 
-    var dot = '  "' + this.name + '" [label=< ';
-    dot += '<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">\n';
+    var dot = '  "' + this.qname + '" [label=< ';
+    dot += '<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="2">\n';
+
+    // - context row
+
+    var anyContext = false;
+    function emitContext(str) {
+      if (str) {
+        if (anyContext) {
+          dot += '<BR>';
+        } else {
+          dot += '  <TR><TD ALIGN="LEFT" BORDER="0"><FONT COLOR="#444444" POINT-SIZE="10">';
+        }
+        dot += str;
+        anyContext = true;
+      }
+    }
+    emitContext(this.filename);
+    if (anyContext) {
+      dot += '</FONT></TD></TR>\n';
+    }
 
     // - class row
     // Ugh, putting whitespace in there to compensate for bolding causing
@@ -102,12 +134,16 @@ function DiagramClassSlot(owner, port, name) {
   this.definitionLineInfo = null;
 }
 DiagramClassSlot.prototype = {
-  useDeclaration: function(lineInfo) {
-
+  markDeclaration: function(path, lineInfo) {
+    this.owner.maybeUsePathInfo(path, lineInfo);
   },
 
-  useDefinition: function(lineInfo) {
+  markDefinition: function(path, lineInfo) {
+    this.owner.maybeUsePathInfo(path, lineInfo);
+  },
 
+  markUse: function(path, lineInfo) {
+    this.owner.maybeUsePathInfo(path, lineInfo);
   },
 
   toDot: function() {
@@ -121,7 +157,7 @@ DiagramClassSlot.prototype = {
  * information available to us to know what's what, we rely on the convention
  * that classes
  */
-var RE_CPP_SYMBOL = /^(\w+::)*(\w+)::([\w~]+)$/;
+var RE_CPP_SYMBOL = /^([\w() ]+::)*(\w+)::([\w~]+)$/;
 var RE_STARTSWITH_LOWER = /^[a-z]/;
 var RE_STD_CLASS_PREFIX = /^ns|moz/;
 var RE_JS_SYMBOL = /^(\w+#)*(\w+)#(\w+)$/;
@@ -166,7 +202,7 @@ DiagramSpace.prototype = {
         if (RE_STARTSWITH_LOWER.test(match[2]) &&
             !RE_STD_CLASS_PREFIX.test(match[2])) {
           if (namespace) {
-            namespace += "::" + match[2];
+            namespace += match[2] + "::";
           } else {
             namespace = match[2];
           }
@@ -187,14 +223,14 @@ DiagramSpace.prototype = {
     // collisions.
     var qname;
     if (namespace) {
-      qname = namespace + '::' + className;
+      qname = namespace + className;
     } else {
       qname = className;
     }
 
     var dclass = this._classesByName.get(qname);
     if (!dclass) {
-      dclass = new DiagramClass(namespace, className);
+      dclass = new DiagramClass(namespace, className, qname);
       this._classesByName.set(qname, dclass);
     }
 
@@ -214,7 +250,7 @@ DiagramSpace.prototype = {
         var lineInfo = lines[iLine];
 
         var slot = this._ensureClassAndSlot(symbol, path);
-        slot.useDeclaration(lineInfo);
+        slot.markDeclaration(path, lineInfo);
       }
     }
   },
@@ -227,7 +263,7 @@ DiagramSpace.prototype = {
         var lineInfo = lines[iLine];
 
         var slot = this._ensureClassAndSlot(symbol, path);
-        slot.useDeclaration(lineInfo);
+        slot.markDeclaration(path, lineInfo);
       }
     }
   },
@@ -240,7 +276,7 @@ DiagramSpace.prototype = {
         var lineInfo = lines[iLine];
 
         var slot = this._ensureClassAndSlot(symbol, path);
-        slot.useDefinition(lineInfo);
+        slot.markDefinition(path, lineInfo);
       }
     }
   },
@@ -260,28 +296,94 @@ DiagramSpace.prototype = {
         var lineInfo = lines[iLine];
 
         var sourceSlot = this._ensureClassAndSlot(lineInfo.context, path);
+        sourceSlot.markUse(path, lineInfo);
         this._ensureEdge(sourceSlot, targetSlot);
       }
     }
   },
 
   _renderEdge: function(edge) {
-    return '"' + edge.source.owner.name + '":' + edge.source.port + ':e -> ' +
-           '"' + edge.target.owner.name + '":' + edge.target.port + ':w;\n';
+    return '"' + edge.source.owner.qname + '":' + edge.source.port + ':e -> ' +
+           '"' + edge.target.owner.qname + '":' + edge.target.port + ':w;\n';
   },
 
   renderToDot: function() {
     var dot = "digraph outer {\n  node [shape=plaintext fontsize=12]\n";
 
+    var clusterer = new SubgraphClusterer();
     for (var dclass of this._classesByName.values()) {
-      dot += dclass.toDot();
+      clusterer.addClustered(dclass.pathParts, dclass);
     }
+    dot += clusterer.renderToDot('/');
 
     for (var edge of this._edges) {
       dot += this._renderEdge(edge);
     }
 
     dot += "}";
+    return dot;
+  }
+};
+
+/**
+ * Helper to cluster dot snippets inside subgraphs.
+ */
+function SubgraphClusterer() {
+  this.root = { kids: new Map(), items: [] };
+}
+SubgraphClusterer.prototype = {
+  addClustered: function(pathParts, item) {
+    var cur = this.root;
+    if (pathParts) {
+      for (var i=0; i < pathParts.length; i++) {
+        var part = pathParts[i];
+        var next = cur.kids.get(part);
+        if (!next) {
+          next = { kids: new Map(), items: [] }
+          cur.kids.set(part, next);
+        }
+        cur = next;
+      }
+    }
+    cur.items.push(item);
+  },
+
+  renderToDot: function(delim) {
+    var dot = "";
+    var numClusters = 0;
+
+    function traverse(branch, parts) {
+      // We need to emit a subgraph if we have any items at this level or
+      // multiple child branches.
+      var emitThis = (branch.items.length || branch.kids.size > 1);
+
+      var recurseParts;
+      if (emitThis) {
+        var curPath = parts.join(delim);
+        dot += "subgraph cluster" + (numClusters++) + " {\n";
+        dot += 'label="' + curPath + '"\n';
+        recurseParts = [];
+      } else {
+        recurseParts = parts;
+      }
+
+      for (var keyPair of branch.kids) {
+        var part = keyPair[0];
+        var kidBranch = keyPair[1];
+        traverse(kidBranch, recurseParts.concat(part));
+      }
+
+      for (var i=0; i < branch.items.length; i++) {
+        var item = branch.items[i];
+        dot += item.toDot() + "\n";
+      }
+
+      if (emitThis) {
+        dot += "}\n"; // close subgraph
+      }
+    }
+    traverse(this.root, []);
+
     return dot;
   }
 };
@@ -339,13 +441,25 @@ function deriveDiagram(results, epoch) {
   chewQKinds(results.normal);
 
   var dotStr = diagram.renderToDot();
+  postMessage({ type: "debug", dotStr: dotStr });
 
-  // the "fdp" engine is also workable but the edges can end up sad.
-  var svgDoc = Viz(dotStr, { format: "svg", engine: "dot", });
+  // Engine-wise, dot and fdp both work for our needs.  dot uses a simpler
+  // layout strategy which, combined with clever edges, can look great.
+  // However, the simple horizontal layout strategy can result in a very wide
+  // layout because edges are required between nodes for them to be placed
+  // vertically beneath nodes.  It then becomes advisable to use "fdp" in those
+  // cases.
+  //
+  // The right course of action might be to have the search page tell us how
+  // wide a display area it has.  We perform layout with dot and extract the
+  // width.  If it's wider than the display area, we re-run with fdp.
+  //
+  // But for now we just use fdp all the time.
+
+  var svgDoc = Viz(dotStr, { format: "svg", engine: "fdp", }); // was: dot
   // get rid of the document bits; we just want to inject the svg directly into
   // the document on the other side, not an iframe.
   var svgStr = svgDoc.slice(svgDoc.indexOf('<svg'));
 
-  postMessage({ type: "debug", dotStr: dotStr });
   postMessage({ type: "svg", epoch: epoch, svgStr: svgStr });
 }
