@@ -14,9 +14,10 @@ pub struct Location {
 }
 
 #[derive(Eq, PartialEq, PartialOrd, Ord, Debug)]
-pub struct LineRange {
+pub struct OffsetRange {
     pub start_lineno: u32,
-    pub end_lineno: u32,
+    pub start_offset: u32,
+    pub end_offset: u32,
 }
 
 #[derive(Debug)]
@@ -41,7 +42,7 @@ pub struct AnalysisTarget {
     pub sym: String,
     pub context: String,
     pub contextsym: String,
-    pub peek_range: LineRange,
+    pub peek_range: OffsetRange,
 }
 
 #[derive(Debug)]
@@ -66,11 +67,14 @@ fn parse_location(loc: &str) -> Location {
     Location { lineno: lineno, col_start: col_start, col_end: col_end }
 }
 
-fn parse_line_range(range: &str) -> LineRange {
-    let v : Vec<&str> = range.split("-").collect();
+// Made public for use by the webserver to parse the same syntax when passed as a query option.
+pub fn parse_offset_range(range: &str) -> OffsetRange {
+    // format is: "${start_lineno}:${start_offset}-${end_offset}"
+    let v : Vec<&str> = range.split(|c| c == ':' || c == '-').collect();
     let start_lineno = v[0].parse::<u32>().unwrap();
-    let end_lineno = v[1].parse::<u32>().unwrap();
-    LineRange { start_lineno: start_lineno, end_lineno: end_lineno }
+    let start_offset = v[1].parse::<u32>().unwrap();
+    let end_offset = v[2].parse::<u32>().unwrap();
+    OffsetRange { start_lineno: start_lineno, start_offset: start_offset, end_offset: end_offset }
 }
 
 pub fn read_analysis<T>(filename: &str, filter: &Fn(&Object) -> Option<T>) -> Vec<WithLocation<Vec<T>>> {
@@ -158,8 +162,8 @@ pub fn read_target(obj : &Object) -> Option<AnalysisTarget> {
         None => "".to_string()
     };
     let peek_range = match obj.get("peekRange") {
-        Some(json) => parse_line_range(json.as_string().unwrap()),
-        None => LineRange { start_lineno: 0, end_lineno: 0 }
+        Some(json) => parse_offset_range(json.as_string().unwrap()),
+        None => OffsetRange { start_lineno: 0, start_offset: 0, end_offset: 0 }
     };
     let sym = obj.get("sym").unwrap().as_string().unwrap().to_string();
 

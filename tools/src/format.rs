@@ -1,7 +1,12 @@
+extern crate memmap;
+
 use std::io::Write;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
+use std::str;
+
+use self::memmap::{Mmap, Protection};
 
 use file_format::analysis;
 use blame;
@@ -10,7 +15,7 @@ use languages;
 use languages::FormatAs;
 
 use config::GitData;
-use file_format::analysis::{WithLocation, AnalysisSource, Jump};
+use file_format::analysis::{WithLocation, AnalysisSource, Jump, OffsetRange};
 use output::{self, F, Options, PanelItem, PanelSection};
 
 use rustc_serialize::json::{self, Json};
@@ -22,7 +27,7 @@ use chrono::datetime::DateTime;
 use config;
 
 pub fn format_code(jumps: &HashMap<String, Jump>, format: FormatAs,
-                   path: &str, input: &str,
+                   path: &str, input: &str, first_line: u64,
                    analysis: &[WithLocation<Vec<AnalysisSource>>]) -> (Vec<String>, String)
 {
     let tokens = match format {
@@ -42,7 +47,9 @@ pub fn format_code(jumps: &HashMap<String, Jump>, format: FormatAs,
     }
 
     let mut line_start = 0;
-    let mut cur_line = 1;
+    // In the event the caller is providing us with a subset of a file, we may
+    // not be starting from 1.
+    let mut cur_line = first_line;
 
     let mut cur_datum = 0;
 
@@ -200,6 +207,41 @@ pub fn format_code(jumps: &HashMap<String, Jump>, format: FormatAs,
     (output_lines, json::encode(&Json::Array(generated_json)).unwrap())
 }
 
+pub fn format_excerpt(path: &str,
+                      offset_range: &OffsetRange,
+                      writer: &mut Write) -> Result<(), &'static str> {
+    let jumps : HashMap<String, analysis::Jump> = HashMap::new();
+    let analysis = Vec::new();
+    let format = languages::select_formatting(path);
+
+    let file_mmap = Mmap::open_path(path, Protection::Read).unwrap();
+    let bytes: &[u8] = unsafe { file_mmap.as_slice() };
+    // If, in the future, we find the tokenizer needs additional context to reach the proper
+    // state, we could widen this slice by some number of newlines (or other heuristic) and then
+    // ignore the un-desired context.
+    //
+    // Also, we're planning to add configurable lines of context... that may definitely necessitate
+    // the expansion since that is less likely to line up like peek range does.
+    let slice = &bytes[offset_range.start_offset as usize .. offset_range.end_offset as usize];
+    let excerpt = match str::from_utf8(slice) {
+        Ok(s) => s,
+        Err(_) => "utf8 encoding problem",
+    };
+
+    let start_lineno = offset_range.start_lineno as u64;
+    let (formatted_lines, _) = format_code(&jumps, format, path, excerpt,
+                                           start_lineno, &analysis);
+    write!(writer, "<pre>").unwrap();
+    for (i, line) in formatted_lines.iter().enumerate() {
+        let lineno = start_lineno + (i as u64) + 1;
+       write!(writer, "<code id=\"line-{}\" aria-labelledby=\"{}\">{}\n</code>",
+              lineno, lineno, line).unwrap();
+    }
+    write!(writer, "</pre>").unwrap();
+
+    Ok(())
+}
+
 fn latin1_to_string(bytes: Vec<u8>) -> String {
     bytes.iter().map(|&c| c as char).collect()
 }
@@ -242,7 +284,7 @@ pub fn format_file_data(cfg: &config::Config,
         _ => {},
     };
 
-    let (output_lines, analysis_json) = format_code(jumps, format, path, &data, &analysis);
+    let (output_lines, analysis_json) = format_code(jumps, format, path, &data, 1, &analysis);
 
     let mut _blame = String::new();
     let blame_lines = match (&tree_config.git, blame_commit) {
@@ -580,7 +622,7 @@ pub fn format_diff(cfg: &config::Config,
     };
     let jumps : HashMap<String, analysis::Jump> = HashMap::new();
     let analysis = Vec::new();
-    let (formatted_lines, _) = format_code(&jumps, format, path, &new_lines, &analysis);
+    let (formatted_lines, _) = format_code(&jumps, format, path, &new_lines, 1, &analysis);
 
     let (header, _) = try!(blame::commit_header(&commit));
 

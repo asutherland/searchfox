@@ -202,7 +202,7 @@ private:
     }
   }
 
-  std::string lineRangeToString(SourceRange Range) {
+  std::string offsetRangeToString(SourceRange Range) {
     std::pair<FileID, unsigned> Begin = SM.getDecomposedLoc(Range.getBegin());
     std::pair<FileID, unsigned> End = SM.getDecomposedLoc(Range.getEnd());
 
@@ -211,12 +211,8 @@ private:
     if (IsInvalid) {
       return "";
     }
-    unsigned Line2 = SM.getLineNumber(End.first, End.second, &IsInvalid);
-    if (IsInvalid) {
-      return "";
-    }
 
-    return stringFormat("%d-%d", Line1, Line2);
+    return stringFormat("%d:%d-%d", Line1, Begin.second, End.second);
   }
 
   // Returns the qualified name of `d` without considering template parameters.
@@ -873,7 +869,7 @@ public:
           Fmt.add("contextsym", ContextSymbol);
         }
         if (PeekRange.isValid()) {
-          PeekRangeStr = lineRangeToString(PeekRange);
+          PeekRangeStr = offsetRangeToString(PeekRange);
           if (!PeekRangeStr.empty()) {
             Fmt.add("peekRange", PeekRangeStr);
           }

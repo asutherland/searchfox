@@ -16,14 +16,18 @@ use hyper::server::{Request, Response};
 use hyper::header::ContentType;
 use hyper::mime::Mime;
 use hyper::uri;
+use hyper::Url;
 
 use tools::config;
 use tools::blame;
+use tools::find_source_file;
 use tools::format;
+use tools::file_format::analysis::{OffsetRange, parse_offset_range};
 use tools::file_format::identifiers::IdentMap;
 
 struct WebRequest {
     path: String,
+    offset_range: Option<OffsetRange>,
 }
 
 struct WebResponse {
@@ -103,6 +107,39 @@ fn handle(cfg: &config::Config, ident_map: &HashMap<String, IdentMap>, req: WebR
 
             let mut writer = Vec::new();
             match format::format_path(cfg, &tree_name, &rev, &path, &mut writer) {
+                Ok(()) => {
+                    let output = String::from_utf8(writer).unwrap();
+                    WebResponse { status: StatusCode::Ok, content_type: "text/html".to_owned(), output: output }
+                },
+                Err(err) =>
+                    WebResponse {
+                        status: StatusCode::InternalServerError,
+                        content_type: "text/plain".to_owned(),
+                        output: err.to_owned(),
+                    }
+            }
+        },
+
+        // Dynamically syntax-highlighted current/trunk source without cross-reference magic for
+        // the purpose of consistently-highlighted search results.  This exists because search is
+        // currently implemented in Python.  When search is ported to rust, this handler can be
+        // obsoleted and directly invoked by search when appropriate.
+        "excerpt" => {
+            let path = path.clone().split_off(2);
+            let path = path.join("/");
+
+            let tree_config = cfg.trees.get(*tree_name).unwrap();
+            let path = find_source_file(path.as_str(), &tree_config.paths.files_path,
+                                        &tree_config.paths.objdir_path);
+
+            let mut writer = Vec::new();
+
+            let result = match req.offset_range {
+                Some(offset_range) => format::format_excerpt(&path, &req.offset_range, &mut writer),
+                None => Err(String::from("You need to specify a peekRange!"))
+            };
+
+            match  {
                 Ok(()) => {
                     let output = String::from_utf8(writer).unwrap();
                     WebResponse { status: StatusCode::Ok, content_type: "text/html".to_owned(), output: output }
@@ -226,11 +263,22 @@ fn main() {
             return;
         }
 
-        let path = match req.uri {
-            uri::RequestUri::AbsolutePath(path) => path,
-            uri::RequestUri::AbsoluteUri(url) => url.path().to_owned(),
+        let url = match req.uri {
+            uri::RequestUri::AbsolutePath(path) => Url::parse(path).unwrap(),
+            uri::RequestUri::AbsoluteUri(url) => url,
             _ => panic!("Unexpected URI"),
         };
+
+        let path = url.path().to_owned();
+
+        let hash_query: HashMap<_, _> = url.query_pairs().into_owned().collect();
+
+        let offset_range = match hash_query.get("peekRange") {
+            Some(peek_range_str) => parse_offset_range(peek_range_str),
+            None => None,
+        };
+
+        let web_request = WebRequest { path: path, offset_range: offset_range };
 
         let guard = match internal_data.lock() {
             Ok(guard) => guard,
@@ -238,7 +286,7 @@ fn main() {
         };
         let (ref cfg, ref ident_map) = *guard;
 
-        let response = handle(&cfg, &ident_map, WebRequest { path: path });
+        let response = handle(&cfg, &ident_map, web_request);
 
         *res.status_mut() = response.status;
         let output = response.output.into_bytes();

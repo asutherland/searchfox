@@ -12,7 +12,7 @@ series of JSON objects delimited by line breaks.)
 Analysis records are currently generated from:
 * `js-analyze.js` for the JavaScript analysis.
 * `idl-analyze.py` for IDL files.
-* `clang-plugin/Indexer.cpp` for C++ files.
+* `clang-plugin/MozsearchIndexer.cpp` for C++ files.
 
 Analysis records are consumed from Rust code in
 `tools/src/analysis.rs`.
@@ -137,6 +137,20 @@ The pretty property is also uses for the context menu. If a target
 record is the only `def` target for a given symbol, then the context
 menu for any source records with that symbol will contain a `Go to
 ${pretty}` entry, where `${pretty}` is the target's `pretty` property.
+
+### Peek Ranges
+
+Target records may contain a `peekRange` of the form
+`${start_line}:${start_file_offset}-${end_file_offset}` that spans the
+potentially multiple lines of source involved in whatever's being indexed, plus
+any contiguous associated documentation block.  For example, a C++ method
+prototype that spans multiple lines and is preceded by a doxygen comment block
+would include both the comment and the multiple lines of prototype.
+
+The range contains file offsets so that the snippet of source can be extracted
+without needing to load the entire source file into memory.  The range is
+prefixed by the line number corresponding to the first offset so that the
+snippet can be displayed with proper line numbers.
 
 ### C++ inheritance
 

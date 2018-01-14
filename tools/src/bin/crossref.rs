@@ -12,7 +12,7 @@ use std::rc::Rc;
 
 extern crate tools;
 use tools::find_source_file;
-use tools::file_format::analysis::{read_analysis, read_target, AnalysisKind};
+use tools::file_format::analysis::{read_analysis, read_target, AnalysisKind, OffsetRange};
 use tools::config;
 
 extern crate rustc_serialize;
@@ -25,7 +25,7 @@ struct SearchResult {
     line: Rc<String>,
     context: Rc<String>,
     contextsym: Rc<String>,
-    peek_lines: Rc<String>,
+    peek_range: OffsetRange,
 }
 
 impl ToJson for SearchResult {
@@ -39,8 +39,12 @@ impl ToJson for SearchResult {
         obj.insert("line".to_string(), self.line.to_json());
         obj.insert("context".to_string(), self.context.to_json());
         obj.insert("contextsym".to_string(), self.contextsym.to_json());
-        if !self.peek_lines.is_empty() {
-            obj.insert("peekLines".to_string(), self.peek_lines.to_json());
+        if self.peek_range.start_lineno != 0 {
+            obj.insert("peekRange".to_string(),
+                       format!("{}:{}-{}",
+                               self.peek_range.start_lineno,
+                               self.peek_range.start_offset,
+                               self.peek_range.end_offset).to_json());
         }
         Json::Object(obj)
     }
@@ -158,34 +162,13 @@ fn main() {
 
                 let (line, offset) = lines[lineno].clone();
 
-                let peek_start = piece.peek_range.start_lineno;
-                let peek_end = piece.peek_range.end_lineno;
-                let mut peek_lines = String::new();
-                if peek_start != 0 {
-                    // The offset of the first non-whitespace
-                    // character of the first line of the peek
-                    // lines. We want all the lines in the peek lines
-                    // to be cut to this offset.
-                    let left_offset = lines[(peek_start - 1) as usize].1;
-
-                    for peek_line_index in peek_start .. peek_end + 1 {
-                        let &(ref peek_line, peek_offset) = &lines[(peek_line_index - 1) as usize];
-
-                        for _i in left_offset .. peek_offset {
-                            peek_lines.push(' ');
-                        }
-                        peek_lines.push_str(&peek_line);
-                        peek_lines.push('\n');
-                    }
-                }
-
                 t3.push(SearchResult {
                     lineno: datum.loc.lineno,
                     bounds: (datum.loc.col_start - offset, datum.loc.col_end - offset),
                     line: line,
                     context: strings.add(piece.context),
                     contextsym: strings.add(piece.contextsym),
-                    peek_lines: strings.add(peek_lines),
+                    peek_range: piece.peek_range
                 });
 
                 let pretty = strings.add(piece.pretty.to_owned());
