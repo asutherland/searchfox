@@ -1401,7 +1401,7 @@ public:
     }
 
     visitIdentifier("use", "function", getQualifiedName(NamedCallee), Loc, Mangled,
-                    QualType(), getContext(Loc), Flags);
+                    E->getCallReturnType(*AstContext), getContext(Loc), Flags);
 
     return true;
   }
@@ -1416,7 +1416,7 @@ public:
     TagDecl *Decl = L.getDecl();
     std::string Mangled = getMangledName(CurMangleContext, Decl);
     visitIdentifier("use", "type", getQualifiedName(Decl), Loc, Mangled,
-                    QualType(), getContext(Loc));
+                    L.getType(), getContext(Loc));
     return true;
   }
 
@@ -1430,7 +1430,7 @@ public:
     NamedDecl *Decl = L.getTypedefNameDecl();
     std::string Mangled = getMangledName(CurMangleContext, Decl);
     visitIdentifier("use", "type", getQualifiedName(Decl), Loc, Mangled,
-                    QualType(), getContext(Loc));
+                    L.getType(), getContext(Loc));
     return true;
   }
 
@@ -1444,7 +1444,7 @@ public:
     NamedDecl *Decl = L.getDecl();
     std::string Mangled = getMangledName(CurMangleContext, Decl);
     visitIdentifier("use", "type", getQualifiedName(Decl), Loc, Mangled,
-                    QualType(), getContext(Loc));
+                    L.getType(), getContext(Loc));
     return true;
   }
 
@@ -1500,11 +1500,11 @@ public:
 
       std::string Mangled = getMangledName(CurMangleContext, Decl);
       visitIdentifier("use", "function", getQualifiedName(Decl), Loc, Mangled,
-                      QualType(), getContext(Loc));
+                      E->getType(), getContext(Loc));
     } else if (isa<EnumConstantDecl>(Decl)) {
       std::string Mangled = getMangledName(CurMangleContext, Decl);
       visitIdentifier("use", "enum", getQualifiedName(Decl), Loc, Mangled,
-                      QualType(), getContext(Loc));
+                      E->getType(), getContext(Loc));
     }
 
     return true;
