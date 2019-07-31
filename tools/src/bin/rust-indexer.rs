@@ -399,6 +399,9 @@ fn visit_common(
             sym: vec![sanitized],
             no_crossref: false,
             nesting_range,
+            // TODO: Expose type information for fields/etc.
+            type_pretty: None,
+            type_sym: None,
         },
         loc,
     };
