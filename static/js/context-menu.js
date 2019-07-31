@@ -243,13 +243,13 @@ function loadSymbolInfo(sym) {
   CACHED_SYMBOL_SEARCHES.set(sym, promise);
   return promise;
 }
+
 /**
- * Reprocess the symbol search results slightly.  Specifically:
- * - Only keep "normal" results.
- * - Re-partition and re-sort into 2 buckets, discarding the pretty key
- *   formatting:
- *   - declDefs: Declarations then definitions, in that order.
- *   - uses: Still uses.
+ * Reprocess the symbol sorch results slightly.  Changes currently are:
+ * - The pathkinds (normal/test/generated) get flattened.
+ * - decls have forward declarations filtered out because they are boring to
+ *   display.
+ * - We throw other kinds on the floor, which we probably shouldn't.
  */
 function normalizeSymbolInfo(data) {
   var decls = [];
@@ -273,46 +273,36 @@ function normalizeSymbolInfo(data) {
     return true;
   }
 
-  function chewQKinds(qkinds) {
-    for (var qk in qkinds) {
-      var value = qkinds[qk];
-      var prettySymbol;
-
-      // Discriminate based on the 3rd letter which varies over all types.
-      switch (qk[2]) {
-        case "c": // "Declarations (".length === 14
-          prettySymbol = qk.slice(14, -1);
-          decls = decls.concat(value.filter(dropForwardDecls));
-          break;
-        case "f": // "Definitions (".length === 13
-          prettySymbol = qk.slice(13, -1);
-          defs = defs.concat(value);
-          break;
-        case "e": // "Uses (".length === 6
-          uses = uses.concat(value);
-          totalUses += value.reduce(function(accumulated, fileResult) {
-            return accumulated + fileResult.lines.length;
-          }, 0);
-          break;
-        case "s": // "Assignments (".length === 13
-          // Not used yet.
-          continue;
-        case "L": // "IDL (".length === 5
-          prettySymbol = qk.slice(5, -1);
-          decls = decls.concat(value);
-          break;
+  let meta = {};
+  if (data.semantic) {
+    for (let rawSymInfo of Object.values(data.semantic)) {
+      meta = rawSymInfo.meta;
+      for (let [pathKind, kindGroups] of Object.entries(rawSymInfo.hits)) {
+        for (let [kind, pathLines] of Object.entries(kindGroups)) {
+          switch (kind) {
+            case 'decls':
+              decls = decls.concat(pathLines.filter(dropForwardDecls));
+              break;
+            case 'defs':
+              defs = defs.concat(pathLines);
+              break;
+            case 'uses':
+            uses = uses.concat(pathLines);
+            totalUses += pahthLines.reduce(function(accumulated, fileResult) {
+              return accumulated + fileResult.lines.length;
+            }, 0);
+            break;
+          }
+        }
       }
-      // It might be appropriate assert the pretty symbol matches here.
     }
   }
 
-  chewQKinds(data.normal || []);
-  chewQKinds(data.generated || []);
-
   return {
-    decls: decls,
-    defs: defs,
-    uses: uses,
+    meta,
+    decls,
+    defs,
+    uses,
     totalUses: totalUses
   };
 }
@@ -392,8 +382,8 @@ function makeDeclarationPopulater(sym) {
           linkElem.href = makeSourceURL(path + '#' + line.lno);
 
           var codeElem = document.createElement('pre');
-          if (line.rawComment) {
-            codeElem.textContent = line.rawComment + '\n' + line.line;
+          if (line.peekLines) {
+            codeElem.textContent = line.peekLines;
           } else {
             codeElem.textContent = line.line;
           }
@@ -530,6 +520,7 @@ $("#file").on("click", "code", function(event) {
 
   var elt = $(event.target);
   var index = elt.closest("[data-i]").attr("data-i");
+  var longestPretty = '';
   if (index) {
     // Comes from the generated page.
     var [jumps, searches] = ANALYSIS_DATA[index];
@@ -537,9 +528,17 @@ $("#file").on("click", "code", function(event) {
     for (var i = 0; i < jumps.length; i++) {
       var sym = jumps[i].sym;
       var pretty = jumps[i].pretty;
-      menuItems.push({html: fmt("Go to definition of _", pretty),
-                      href: `/${tree}/define?q=${encodeURIComponent(sym)}&redirect=false`,
-                      icon: "search"});
+      
+      if (pretty.length > longestPretty.length) {
+        longestPretty = pretty;
+      }
+
+      menuItems.push({
+        label: fmt("Go to definition of _", pretty),
+        href: `/${tree}/define?q=${encodeURIComponent(sym)}&redirect=false`,
+        icon: "search",
+        populateSubmenu: makeDeclarationPopulater(sym),
+      });
     }
 
     for (var i = 0; i < searches.length; i++) {
@@ -554,9 +553,11 @@ $("#file").on("click", "code", function(event) {
   var word = getTargetWord();
   if (word !== null) {
     // A word was clicked on.
-    menuItems.push({html: fmt('Search for the substring <strong>_</strong>', word),
-                    href: `/${tree}/search?q=${encodeURIComponent(word)}&redirect=false`,
-                    icon: "search"});
+    menuItems.push({
+      label: fmt('Search for the substring <strong>_</strong>', word),
+      href: `/${tree}/search?q=${encodeURIComponent(word)}&redirect=false`,
+      icon: "search"
+    });
   }
 
   var token = elt.closest("[data-symbols]");
@@ -568,7 +569,14 @@ $("#file").on("click", "code", function(event) {
   }
 
   if (menuItems.length > 0) {
-    setContextMenu({menuItems: menuItems}, event);
+    setContextMenu(
+      {
+        menuHeader: {
+          label: longestPretty
+        },
+        menuItems
+      },
+    event);
   }
 });
 
