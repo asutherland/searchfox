@@ -1312,6 +1312,11 @@ public:
       return true;
     }
 
+    QualType qtype = QualType();
+    if (ValueDecl *D2 = dyn_cast<ValueDecl>(D)) {
+      qtype = D2->getType();
+    }
+
     SourceRange CommentRange = getCommentRange(D);
     PeekRange = combineRanges(PeekRange, CommentRange);
     PeekRange = validateRange(Loc, PeekRange);
@@ -1356,7 +1361,7 @@ public:
     }
 
     visitIdentifier(Kind, PrettyKind, getQualifiedName(D), Loc, Symbols,
-                    QualType(),
+                    qtype,
                     getContext(D), Flags, PeekRange, NestingRange);
 
     return true;
