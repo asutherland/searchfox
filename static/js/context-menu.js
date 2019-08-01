@@ -217,12 +217,8 @@ $("#file").on("mousemove", function(event) {
   hovered = findReferences(elt.getAttribute("data-symbols"), elt.textContent);
   hovered.addClass("hovered");
 
-  var index = elt.attr("data-i");
-  if (index) {
-    var [jumps, searches] = ANALYSIS_DATA[index];
-    if (searches.length) {
-      loadSymbolInfo(searches[0].sym);
-    }
+  for (let symbol of symbolsFromString(elt.dataset.symbols)) {
+    loadSymbolInfo(symbol);
   }
 });
 
@@ -236,6 +232,7 @@ function loadSymbolInfo(sym) {
   }
   var promise = new Promise(function(resolve, reject) {
     var searchUrl = buildAjaxURL('symbol:' + sym);
+    searchUrl = searchUrl.replace("/search", "/sorch");
     $.getJSON(searchUrl, function(data) {
       resolve(normalizeSymbolInfo(data));
     }).fail(function() { reject(); });
@@ -288,7 +285,7 @@ function normalizeSymbolInfo(data) {
               break;
             case 'uses':
             uses = uses.concat(pathLines);
-            totalUses += pahthLines.reduce(function(accumulated, fileResult) {
+            totalUses += pathLines.reduce(function(accumulated, fileResult) {
               return accumulated + fileResult.lines.length;
             }, 0);
             break;
@@ -298,13 +295,15 @@ function normalizeSymbolInfo(data) {
     }
   }
 
-  return {
+  let result = {
     meta,
     decls,
     defs,
     uses,
     totalUses: totalUses
   };
+  console.log('input', data, 'result', result);
+  return result;
 }
 
 function makeSourceURL(path) {
@@ -519,16 +518,17 @@ $("#file").on("click", "code", function(event) {
   var menuItems = [];
 
   var elt = $(event.target);
+  console.log('clicked on elt', elt);
   var index = elt.closest("[data-i]").attr("data-i");
   var longestPretty = '';
   if (index) {
     // Comes from the generated page.
     var [jumps, searches] = ANALYSIS_DATA[index];
-
+console.log('from index', index, 'got', jumps, searches);
     for (var i = 0; i < jumps.length; i++) {
       var sym = jumps[i].sym;
       var pretty = jumps[i].pretty;
-      
+
       if (pretty.length > longestPretty.length) {
         longestPretty = pretty;
       }
@@ -544,9 +544,11 @@ $("#file").on("click", "code", function(event) {
     for (var i = 0; i < searches.length; i++) {
       var sym = searches[i].sym;
       var pretty = searches[i].pretty;
-      menuItems.push({html: fmt("Search for _", pretty),
-                      href: `/${tree}/search?q=symbol:${encodeURIComponent(sym)}&redirect=false`,
-                      icon: "search"});
+      menuItems.push({
+        label: fmt("Search for _", pretty),
+        href: `/${tree}/search?q=symbol:${encodeURIComponent(sym)}&redirect=false`,
+        icon: "search"
+      });
     }
   }
 
@@ -564,14 +566,16 @@ $("#file").on("click", "code", function(event) {
   var symbols = token.attr("data-symbols");
   if (symbols) {
     var visibleToken = token[0].textContent;
-    menuItems.push({html: "Sticky highlight",
-                    href: `javascript:stickyHighlight('${symbols}', '${visibleToken}')`});
+    menuItems.push({
+      label: "Sticky highlight",
+      href: `javascript:stickyHighlight('${symbols}', '${visibleToken}')`
+    });
   }
 
   if (menuItems.length > 0) {
     setContextMenu(
       {
-        menuHeader: {
+        header: {
           label: longestPretty
         },
         menuItems
