@@ -60,7 +60,11 @@ MegaMenu.prototype = {
     var linkElem = document.createElement('a');
     linkElem.href = item.href;
     linkElem.className = item.icon + ' icon context-menu-item';
-    linkElem.textContent = item.label;
+    if (item.label) {
+      linkElem.textContent = item.label;
+    } else if (item.labelHtml) {
+      linkElem.innerHTML = item.labelHtml;
+    }
 
     var itemId = 'submenu-' + this.itemCount++;
     linkElem.id = itemId;
@@ -234,6 +238,7 @@ function loadSymbolInfo(sym) {
     var searchUrl = buildAjaxURL('symbol:' + sym);
     searchUrl = searchUrl.replace("/search", "/sorch");
     $.getJSON(searchUrl, function(data) {
+      console.log('getJSON fired', data);
       resolve(normalizeSymbolInfo(data));
     }).fail(function() { reject(); });
   });
@@ -352,7 +357,9 @@ function makePathElements(path, className, optionalLno) {
  */
 function makeDeclarationPopulater(sym) {
   return function(menuElem) {
+    console.log('triggering declaration pop', sym, menuElem);
     loadSymbolInfo(sym).then(function(info) {
+      console.log('declarator got', info);
       var fileResults;
       // This is a hack to support treating type definitions as declarations.
       if (info.decls.length) {
@@ -524,7 +531,6 @@ $("#file").on("click", "code", function(event) {
   if (index) {
     // Comes from the generated page.
     var [jumps, searches] = ANALYSIS_DATA[index];
-console.log('from index', index, 'got', jumps, searches);
     for (var i = 0; i < jumps.length; i++) {
       var sym = jumps[i].sym;
       var pretty = jumps[i].pretty;
@@ -556,7 +562,7 @@ console.log('from index', index, 'got', jumps, searches);
   if (word !== null) {
     // A word was clicked on.
     menuItems.push({
-      label: fmt('Search for the substring <strong>_</strong>', word),
+      labelHtml: fmt('Search for the substring <strong>_</strong>', word),
       href: `/${tree}/search?q=${encodeURIComponent(word)}&redirect=false`,
       icon: "search"
     });
