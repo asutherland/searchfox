@@ -238,7 +238,6 @@ function loadSymbolInfo(sym) {
     var searchUrl = buildAjaxURL('symbol:' + sym);
     searchUrl = searchUrl.replace("/search", "/sorch");
     $.getJSON(searchUrl, function(data) {
-      console.log('getJSON fired', data);
       resolve(normalizeSymbolInfo(data));
     }).fail(function() { reject(); });
   });
@@ -307,7 +306,6 @@ function normalizeSymbolInfo(data) {
     uses,
     totalUses: totalUses
   };
-  console.log('input', data, 'result', result);
   return result;
 }
 
@@ -357,9 +355,7 @@ function makePathElements(path, className, optionalLno) {
  */
 function makeDeclarationPopulater(sym) {
   return function(menuElem) {
-    console.log('triggering declaration pop', sym, menuElem);
     loadSymbolInfo(sym).then(function(info) {
-      console.log('declarator got', info);
       var fileResults;
       // This is a hack to support treating type definitions as declarations.
       if (info.decls.length) {
@@ -412,7 +408,7 @@ function makeDeclarationPopulater(sym) {
 function makeUsesSubmenuPopulater(sym) {
   return function(menuElem) {
     loadSymbolInfo(sym).then(function(info) {
-      if (info.totalUses < 6) {
+      if (info.totalUses < 12) {
         // Small result count, show everything.
         info.uses.forEach(function(fileResult) {
           var path = fileResult.path;
@@ -453,7 +449,7 @@ function makeUsesSubmenuPopulater(sym) {
       } else {
         // Overload mode.
         // TODO: Cluster.
-        menuElem.textContent = `There's a whopping ${info.totalUses} uses!`;
+        menuElem.textContent = `There's a whopping ${info.totalUses} uses!  Just click.`;
       }
     });
   }
@@ -522,12 +518,35 @@ $("#file").on("click", "code", function(event) {
     return s.replace("_", data);
   }
 
+  var emittedSyms = new Set();
+  function emit_def_item_for_symbol(sym, pretty) {
+    emittedSyms.add(sym);
+    menuItems.push({
+      labelHtml: fmt("Go to definition of _", pretty),
+      href: `/${tree}/define?q=${encodeURIComponent(sym)}&redirect=false`,
+      icon: "search",
+      populateSubmenu: makeDeclarationPopulater(sym),
+    });
+  }
+
+  function emit_search_for_symbol(sym, pretty) {
+    emittedSyms.add(sym);
+    menuItems.push({
+      labelHtml: fmt("Search for _", pretty),
+      href: `/${tree}/search?q=symbol:${encodeURIComponent(sym)}&redirect=false`,
+      icon: "search",
+      populateSubmenu: makeUsesSubmenuPopulater(sym),
+    });
+  }
+
   var menuItems = [];
 
   var elt = $(event.target);
-  console.log('clicked on elt', elt);
+
   var index = elt.closest("[data-i]").attr("data-i");
-  var longestPretty = '';
+  // We want to latch the first (and likely best?) pretty symbol we fine for the
+  // header of the mega-menu.
+  var firstPretty = '';
   if (index) {
     // Comes from the generated page.
     var [jumps, searches] = ANALYSIS_DATA[index];
@@ -535,26 +554,17 @@ $("#file").on("click", "code", function(event) {
       var sym = jumps[i].sym;
       var pretty = jumps[i].pretty;
 
-      if (pretty.length > longestPretty.length) {
-        longestPretty = pretty;
+      if (!firstPretty) {
+        firstPretty = pretty;
       }
 
-      menuItems.push({
-        label: fmt("Go to definition of _", pretty),
-        href: `/${tree}/define?q=${encodeURIComponent(sym)}&redirect=false`,
-        icon: "search",
-        populateSubmenu: makeDeclarationPopulater(sym),
-      });
+      emit_def_item_for_symbol(sym, pretty);
     }
 
     for (var i = 0; i < searches.length; i++) {
       var sym = searches[i].sym;
       var pretty = searches[i].pretty;
-      menuItems.push({
-        label: fmt("Search for _", pretty),
-        href: `/${tree}/search?q=symbol:${encodeURIComponent(sym)}&redirect=false`,
-        icon: "search"
-      });
+      emit_search_for_symbol(sym, pretty);
     }
   }
 
@@ -570,8 +580,24 @@ $("#file").on("click", "code", function(event) {
 
   var token = elt.closest("[data-symbols]");
   var symbols = token.attr("data-symbols");
+  var visibleToken = '';
+  var info = {};
   if (symbols) {
-    var visibleToken = token[0].textContent;
+    var firstSym = symbolsFromString(symbols)[0];
+    if (firstSym) {
+      info = SYM_INFO[firstSym] || info; // keep our empty object if falsey.
+      if (info) {
+        // If we have information on the type of the thing we're dealing with
+        // and it's not already a symbol we've emitted menu stuff for, then
+        // emit.
+        if (info.typesym && !emittedSyms.has(info.typesym)) {
+          emit_def_item_for_symbol(info.typesym, info.type);
+          emit_search_for_symbol(info.typesym, info.type);
+        }
+      }
+    }
+
+    visibleToken = token[0].textContent;
     menuItems.push({
       label: "Sticky highlight",
       href: `javascript:stickyHighlight('${symbols}', '${visibleToken}')`
@@ -582,7 +608,7 @@ $("#file").on("click", "code", function(event) {
     setContextMenu(
       {
         header: {
-          label: longestPretty
+          label: `${info.syntax || ''} ${info.type || ''} ${firstPretty || visibleToken}`
         },
         menuItems
       },
