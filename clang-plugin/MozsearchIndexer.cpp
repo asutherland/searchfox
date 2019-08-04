@@ -26,6 +26,7 @@
 #include <sstream>
 #include <tuple>
 #include <unordered_set>
+#include <vector>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,6 +53,11 @@ std::string Objdir;
 
 // Absolute path where analysis JSON output will be stored.
 std::string Outdir;
+
+// First entry in pair is the actual Symbol, the second is the trace of how we
+// arrived at this symbol.
+typedef std::pair<std::string, std::string> TracedSymbol;
+typedef std::vector<TracedSymbol> TracedSymbolVec;
 
 #if !defined(_WIN32) && !defined(_WIN64)
 #include <sys/time.h>
@@ -157,6 +163,61 @@ private:
   std::map<FileID, std::unique_ptr<FileInfo>> FileMap;
   MangleContext *CurMangleContext;
   ASTContext *AstContext;
+  /**
+   * In order to generate our "trace" and "tracecontextsym" records, we attempt
+   * to generate a string trace that describes how we arrived at each symbol
+   * we are emitting.  While parts of this string are built up dynamically as
+   * each visitor method is called, there's also important context on the stack.
+   *
+   * However, not all context is relevant to our traces.  For example, the
+   * AutoSetContext that provides support for our `Context` mechanism is neat
+   * but is straightorward.  Templates are the confusing bit right now, so we
+   * have AutoTemplateContext use TracePush and TracePop to help convey how
+   * symbol generation related to templates happens.
+   */
+  std::vector<std::string> _TraceStack;
+
+  std::string genTrace(const char *callerBase) {
+    if (!_TraceStack.empty()) {
+      return _TraceStack.back() + "." + callerBase;
+    }
+
+    return callerBase;
+  }
+
+  std::string genTrace(std::string callerBase) {
+    if (!_TraceStack.empty()) {
+      return _TraceStack.back() + "." + callerBase;
+    }
+
+    return callerBase;
+  }
+
+  void TracePush(const char *label) {
+    _TraceStack.push_back(genTrace(label));
+  }
+
+  void TracePush(std::string label) {
+    _TraceStack.push_back(genTrace(label));
+  }
+
+  void TracePop() {
+    _TraceStack.pop_back();
+  }
+
+  struct AutoTrace {
+    AutoTrace(IndexConsumer *Self, const char *label) : Self(Self) {
+      Self->TracePush(label);
+    }
+    AutoTrace(IndexConsumer *Self, std::string label) : Self(Self) {
+      Self->TracePush(label);
+    }
+    ~AutoTrace() {
+      Self->TracePop();
+    }
+
+    IndexConsumer *Self;
+  };
 
   typedef RecursiveASTVisitor<IndexConsumer> Super;
 
@@ -557,9 +618,12 @@ public:
   // Return a list of mangled names of all the methods that the given method
   // overrides.
   void findOverriddenMethods(const CXXMethodDecl *Method,
-                             std::vector<std::string> &Symbols) {
+                             TracedSymbolVec &Symbols,
+                             std::string fromTrace) {
     std::string Mangled = getMangledName(CurMangleContext, Method);
-    Symbols.push_back(Mangled);
+    Symbols.push_back(std::make_pair(Mangled, fromTrace + ".actual"));
+
+    std::string iterTrace = fromTrace + ".overidden";
 
     CXXMethodDecl::method_iterator Iter = Method->begin_overridden_methods();
     CXXMethodDecl::method_iterator End = Method->end_overridden_methods();
@@ -567,8 +631,10 @@ public:
       const CXXMethodDecl *Decl = *Iter;
       if (Decl->isTemplateInstantiation()) {
         Decl = dyn_cast<CXXMethodDecl>(Decl->getTemplateInstantiationPattern());
+        return findOverriddenMethods(Decl, Symbols, iterTrace + ".tmplInstPat");
+      } else {
+        return findOverriddenMethods(Decl, Symbols, iterTrace);
       }
-      return findOverriddenMethods(Decl, Symbols);
     }
   }
 
@@ -642,23 +708,32 @@ public:
     std::string Name;
 
     // Ultimately this becomes the "contextsym" JSON property.
-    std::vector<std::string> Symbols;
+    TracedSymbolVec Symbols;
 
     Context() {}
-    Context(std::string Name, std::vector<std::string> Symbols)
+    Context(std::string Name, TracedSymbolVec Symbols)
         : Name(Name), Symbols(Symbols) {}
   };
 
-  Context translateContext(NamedDecl *D) {
+  /**
+   * Provides template-piercing so we get both "FooTemplate::Bar" and
+   * "FooTemplate<ConcreteType>::Bar" as contexts for "FooTemplate<T>" with
+   * method bar.
+   */
+  Context translateContext(NamedDecl *D, std::string trace) {
+    trace += ".translateContext";
     const FunctionDecl *F = dyn_cast<FunctionDecl>(D);
     if (F && F->isTemplateInstantiation()) {
       D = F->getTemplateInstantiationPattern();
+      trace += ".tmplInstPat";
     }
 
-    std::vector<std::string> Symbols = {getMangledName(CurMangleContext, D)};
+    TracedSymbolVec Symbols = {
+      std::make_pair(getMangledName(CurMangleContext, D), trace)};
     if (CXXMethodDecl::classof(D)) {
       Symbols.clear();
-      findOverriddenMethods(dyn_cast<CXXMethodDecl>(D), Symbols);
+      findOverriddenMethods(dyn_cast<CXXMethodDecl>(D), Symbols,
+                            trace + ".CXXMethodDecl");
     }
     return Context(D->getQualifiedNameAsString(), Symbols);
   }
@@ -671,7 +746,7 @@ public:
     }
 
     if (CurDeclContext) {
-      return translateContext(CurDeclContext->Decl);
+      return translateContext(CurDeclContext->Decl, genTrace("SourceLocation"));
     }
     return Context();
   }
@@ -687,39 +762,49 @@ public:
     }
 
     AutoSetContext *Ctxt = CurDeclContext;
+    std::string trace = genTrace("CurDeclContext");
     while (Ctxt) {
       if (Ctxt->Decl != D) {
-        return translateContext(Ctxt->Decl);
+        return translateContext(Ctxt->Decl, trace);
       }
       Ctxt = Ctxt->Prev;
+      trace += ".Prev";
     }
     return Context();
   }
 
-  static std::string concatSymbols(const std::vector<std::string> Symbols) {
+  static TracedSymbol concatSymbols(const TracedSymbolVec Symbols) {
     if (Symbols.empty()) {
-      return "";
+      return std::make_pair("", "");
     }
 
     size_t Total = 0;
+    size_t TotalTrace = 0;
     for (auto It = Symbols.begin(); It != Symbols.end(); It++) {
-      Total += It->length();
+      Total += It->first.length();
+      TotalTrace += It->second.length();
     }
     Total += Symbols.size() - 1;
+    TotalTrace += Symbols.size() - 1;
 
     std::string SymbolList;
     SymbolList.reserve(Total);
+    std::string TraceList;
+    TraceList.reserve(TotalTrace);
 
     for (auto It = Symbols.begin(); It != Symbols.end(); It++) {
-      std::string Symbol = *It;
+      std::string Symbol = It->first;
+      std::string trace = It->second;
 
       if (It != Symbols.begin()) {
         SymbolList.push_back(',');
+        TraceList.push_back(',');
       }
       SymbolList.append(Symbol);
+      TraceList.append(trace);
     }
 
-    return SymbolList;
+    return std::make_pair(SymbolList, TraceList);
   }
 
   // Analyzing template code is tricky. Suppose we have this code:
@@ -745,13 +830,17 @@ public:
   // scoped member expressions before. For these locations, we generate a
   // separate JSON result for each instantiation.
   struct AutoTemplateContext {
-    AutoTemplateContext(IndexConsumer *Self)
+    AutoTemplateContext(IndexConsumer *Self, const char *Label)
         : Self(Self), CurMode(Mode::GatherDependent),
           Parent(Self->TemplateStack) {
       Self->TemplateStack = this;
+      Self->TracePush(Label);
     }
 
-    ~AutoTemplateContext() { Self->TemplateStack = Parent; }
+    ~AutoTemplateContext() {
+      Self->TracePop();
+      Self->TemplateStack = Parent;
+    }
 
     // We traverse templates in two modes:
     enum class Mode {
@@ -772,6 +861,9 @@ public:
         return;
       }
 
+      if (DependentLocations.empty()) {
+        FirstDependentLoc = Loc;
+      }
       DependentLocations.insert(Loc.getRawEncoding());
       if (Parent) {
         Parent->visitDependent(Loc);
@@ -818,6 +910,9 @@ public:
       return false;
     }
 
+  public:
+    SourceLocation FirstDependentLoc;
+
   private:
     IndexConsumer *Self;
     Mode CurMode;
@@ -839,7 +934,7 @@ public:
   }
 
   bool TraverseClassTemplateDecl(ClassTemplateDecl *D) {
-    AutoTemplateContext Atc(this);
+    AutoTemplateContext Atc(this, "ClassTemplateDecl");
     Super::TraverseClassTemplateDecl(D);
 
     if (!Atc.needsAnalysis()) {
@@ -852,21 +947,28 @@ public:
       return true;
     }
 
+    AutoTrace atdep(this, "dep[" + locationToString(Atc.FirstDependentLoc) + "]");
+
+    int iSpec = 0;
     for (auto *Spec : D->specializations()) {
+      int iRd = 0;
       for (auto *Rd : Spec->redecls()) {
         // We don't want to visit injected-class-names in this traversal.
         if (cast<CXXRecordDecl>(Rd)->isInjectedClassName())
           continue;
 
+        AutoTrace at(this, "spec[" + std::to_string(iSpec) + "_" + std::to_string(iRd) + "]");
         TraverseDecl(Rd);
+        ++iRd;
       }
+      ++iSpec;
     }
 
     return true;
   }
 
   bool TraverseFunctionTemplateDecl(FunctionTemplateDecl *D) {
-    AutoTemplateContext Atc(this);
+    AutoTemplateContext Atc(this, "FunctionTemplateDecl");
     Super::TraverseFunctionTemplateDecl(D);
 
     if (!Atc.needsAnalysis()) {
@@ -879,10 +981,17 @@ public:
       return true;
     }
 
+    AutoTrace atdep(this, "dep[" + locationToString(Atc.FirstDependentLoc) + "]");
+
+    int iSpec = 0;
     for (auto *Spec : D->specializations()) {
+      int iRd = 0;
       for (auto *Rd : Spec->redecls()) {
+        AutoTrace at(this, "spec[" + std::to_string(iSpec) + "_" + std::to_string(iRd) + "]");
         TraverseDecl(Rd);
+        iRd++;
       }
+      ++iSpec;
     }
 
     return true;
@@ -916,7 +1025,7 @@ public:
   // called for each identifier that corresponds to a symbol.
   void visitIdentifier(const char *Kind, const char *SyntaxKind,
                        std::string QualName, SourceLocation Loc,
-                       const std::vector<std::string> &Symbols,
+                       const TracedSymbolVec &Symbols,
                        QualType MaybeType = QualType(),
                        Context TokenContext = Context(), int Flags = 0,
                        SourceRange PeekRange = SourceRange(),
@@ -946,22 +1055,28 @@ public:
     FileInfo *F = getFileInfo(Loc);
 
     std::string SymbolList;
+    std::string TraceList;
 
     // Reserve space in symbolList for everything in `symbols`. `symbols` can
     // contain some very long strings.
     size_t Total = 0;
+    size_t TotalTrace = 0;
     for (auto It = Symbols.begin(); It != Symbols.end(); It++) {
-      Total += It->length();
+      Total += It->first.length();
+      TotalTrace += It->second.length();
     }
 
     // Space for commas.
     Total += Symbols.size() - 1;
     SymbolList.reserve(Total);
+    TotalTrace += Symbols.size() - 1;
+    TraceList.reserve(TotalTrace);
 
     // For each symbol, generate one "target":1 item. We want to find this line
     // if someone searches for any one of these symbols.
     for (auto It = Symbols.begin(); It != Symbols.end(); It++) {
-      std::string Symbol = *It;
+      auto &Symbol = It->first;
+      auto &trace = It->second;
 
       if (!(Flags & NoCrossref)) {
         JSONFormatter Fmt;
@@ -971,12 +1086,16 @@ public:
         Fmt.add("kind", Kind);
         Fmt.add("pretty", QualName);
         Fmt.add("sym", Symbol);
+        Fmt.add("trace", trace);
         if (!TokenContext.Name.empty()) {
           Fmt.add("context", TokenContext.Name);
         }
-        std::string ContextSymbol = concatSymbols(TokenContext.Symbols);
-        if (!ContextSymbol.empty()) {
-          Fmt.add("contextsym", ContextSymbol);
+        TracedSymbol tracedContextSymbol = concatSymbols(TokenContext.Symbols);
+        if (!tracedContextSymbol.first.empty()) {
+          Fmt.add("contextsym", tracedContextSymbol.first);
+        }
+        if (!tracedContextSymbol.second.empty()) {
+          Fmt.add("tracecontextsym", tracedContextSymbol.second);
         }
         if (PeekRange.isValid()) {
           PeekRangeStr = lineRangeToString(PeekRange);
@@ -992,8 +1111,10 @@ public:
 
       if (It != Symbols.begin()) {
         SymbolList.push_back(',');
+        TraceList.push_back(',');
       }
       SymbolList.append(Symbol);
+      TraceList.append(trace);
     }
 
     // Generate a single "source":1 for all the symbols. If we search from here,
@@ -1036,6 +1157,7 @@ public:
     Fmt.add("pretty", Pretty);
 
     Fmt.add("sym", SymbolList);
+    Fmt.add("trace", TraceList);
 
     if (Flags & NoCrossref) {
       Fmt.add("no_crossref", 1);
@@ -1047,12 +1169,12 @@ public:
   }
 
   void visitIdentifier(const char *Kind, const char *SyntaxKind,
-                       std::string QualName, SourceLocation Loc, std::string Symbol,
+                       std::string QualName, SourceLocation Loc, TracedSymbol Symbol,
                        QualType MaybeType = QualType(),
                        Context TokenContext = Context(), int Flags = 0,
                        SourceRange PeekRange = SourceRange(),
                        SourceRange NestingRange = SourceRange()) {
-    std::vector<std::string> V = {Symbol};
+    TracedSymbolVec V = {Symbol};
     visitIdentifier(Kind, SyntaxKind, QualName, Loc, V, MaybeType, TokenContext,
                     Flags, PeekRange, NestingRange);
   }
@@ -1218,7 +1340,9 @@ public:
     // The nesting range identifies the left brace and right brace, which
     // heavily depends on the AST node type.
     SourceRange NestingRange;
+    std::string trace = genTrace("NamedDecl");
     if (FunctionDecl *D2 = dyn_cast<FunctionDecl>(D)) {
+      trace += ".FunctionDecl";
       if (D2->isTemplateInstantiation()) {
         D = D2->getTemplateInstantiationPattern();
       }
@@ -1245,6 +1369,7 @@ public:
         NestingRange = getCompoundStmtRange(D2->getBody());
       }
     } else if (TagDecl *D2 = dyn_cast<TagDecl>(D)) {
+      trace += ".TagDecl";
       Kind = D2->isThisDeclarationADefinition() ? "def" : "decl";
       PrettyKind = "type";
 
@@ -1255,10 +1380,12 @@ public:
         PeekRange = SourceRange();
       }
     } else if (isa<TypedefNameDecl>(D)) {
+      trace += ".TypedefNameDecl";
       Kind = "def";
       PrettyKind = "type";
       PeekRange = SourceRange(Loc, Loc);
     } else if (VarDecl *D2 = dyn_cast<VarDecl>(D)) {
+      trace += ".VarDecl";
       if (D2->isLocalVarDeclOrParm()) {
         Flags = NoCrossref;
       }
@@ -1268,6 +1395,7 @@ public:
                  : "def";
       PrettyKind = "variable";
     } else if (isa<NamespaceDecl>(D) || isa<NamespaceAliasDecl>(D)) {
+      trace += ".Namespacey";
       Kind = "def";
       PrettyKind = "namespace";
       PeekRange = SourceRange(Loc, Loc);
@@ -1279,9 +1407,11 @@ public:
           D2->getRBraceLoc());
       }
     } else if (isa<FieldDecl>(D)) {
+      trace += ".FieldDecl";
       Kind = "def";
       PrettyKind = "field";
     } else if (isa<EnumConstantDecl>(D)) {
+      trace += ".EnumConstantDecl";
       Kind = "def";
       PrettyKind = "enum constant";
     } else {
@@ -1298,10 +1428,12 @@ public:
     PeekRange = validateRange(Loc, PeekRange);
     NestingRange = validateRange(Loc, NestingRange);
 
-    std::vector<std::string> Symbols = {getMangledName(CurMangleContext, D)};
+    TracedSymbolVec Symbols = {
+      std::make_pair(getMangledName(CurMangleContext, D), trace)};
     if (CXXMethodDecl::classof(D)) {
       Symbols.clear();
-      findOverriddenMethods(dyn_cast<CXXMethodDecl>(D), Symbols);
+      findOverriddenMethods(dyn_cast<CXXMethodDecl>(D), Symbols,
+                            trace + ".CXXMethodDecl");
     }
 
     // In the case of destructors, Loc might point to the ~ character. In that
@@ -1349,16 +1481,19 @@ public:
     if (!isInterestingLocation(Loc)) {
       return true;
     }
+    std::string trace = genTrace("CXXConstructExpr");
 
     FunctionDecl *Ctor = E->getConstructor();
     if (Ctor->isTemplateInstantiation()) {
       Ctor = Ctor->getTemplateInstantiationPattern();
+      trace += ".tmplInstPat";
     }
     std::string Mangled = getMangledName(CurMangleContext, Ctor);
 
     // FIXME: Need to do something different for list initialization.
 
-    visitIdentifier("use", "constructor", getQualifiedName(Ctor), Loc, Mangled,
+    visitIdentifier("use", "constructor", getQualifiedName(Ctor), Loc,
+                    std::make_pair(Mangled, trace),
                     QualType(), getContext(Loc));
 
     return true;
@@ -1371,12 +1506,14 @@ public:
     }
 
     const NamedDecl *NamedCallee = dyn_cast<NamedDecl>(Callee);
+    std::string trace = genTrace("CallExpr");
 
     SourceLocation Loc;
 
     const FunctionDecl *F = dyn_cast<FunctionDecl>(NamedCallee);
     if (F->isTemplateInstantiation()) {
       NamedCallee = F->getTemplateInstantiationPattern();
+      trace += ".tmplInstPat";
     }
 
     std::string Mangled = getMangledName(CurMangleContext, NamedCallee);
@@ -1385,11 +1522,13 @@ public:
     Expr *CalleeExpr = E->getCallee()->IgnoreParenImpCasts();
 
     if (CXXOperatorCallExpr::classof(E)) {
+      trace += ".CXXOperatorCallExpr";
       // Just take the first token.
       CXXOperatorCallExpr *Op = dyn_cast<CXXOperatorCallExpr>(E);
       Loc = Op->getOperatorLoc();
       Flags |= OperatorToken;
     } else if (MemberExpr::classof(CalleeExpr)) {
+      trace += ".MemberExpr";
       MemberExpr *Member = dyn_cast<MemberExpr>(CalleeExpr);
       Loc = Member->getMemberLoc();
     } else if (DeclRefExpr::classof(CalleeExpr)) {
@@ -1405,7 +1544,8 @@ public:
       return true;
     }
 
-    visitIdentifier("use", "function", getQualifiedName(NamedCallee), Loc, Mangled,
+    visitIdentifier("use", "function", getQualifiedName(NamedCallee), Loc,
+                    std::make_pair(Mangled, trace),
                     E->getCallReturnType(*AstContext), getContext(Loc), Flags);
 
     return true;
@@ -1420,7 +1560,8 @@ public:
 
     TagDecl *Decl = L.getDecl();
     std::string Mangled = getMangledName(CurMangleContext, Decl);
-    visitIdentifier("use", "type", getQualifiedName(Decl), Loc, Mangled,
+    visitIdentifier("use", "type", getQualifiedName(Decl), Loc,
+                    std::make_pair(Mangled, genTrace("TagTypeLoc")),
                     L.getType(), getContext(Loc));
     return true;
   }
@@ -1434,7 +1575,8 @@ public:
 
     NamedDecl *Decl = L.getTypedefNameDecl();
     std::string Mangled = getMangledName(CurMangleContext, Decl);
-    visitIdentifier("use", "type", getQualifiedName(Decl), Loc, Mangled,
+    visitIdentifier("use", "type", getQualifiedName(Decl), Loc,
+                    std::make_pair(Mangled, genTrace("TypedefTypeLoc")),
                     L.getType(), getContext(Loc));
     return true;
   }
@@ -1448,7 +1590,8 @@ public:
 
     NamedDecl *Decl = L.getDecl();
     std::string Mangled = getMangledName(CurMangleContext, Decl);
-    visitIdentifier("use", "type", getQualifiedName(Decl), Loc, Mangled,
+    visitIdentifier("use", "type", getQualifiedName(Decl), Loc,
+                    std::make_pair(Mangled, genTrace("InjectedClassNameTypeLoc")),
                     L.getType(), getContext(Loc));
     return true;
   }
@@ -1464,12 +1607,14 @@ public:
     if (ClassTemplateDecl *D = dyn_cast<ClassTemplateDecl>(Td)) {
       NamedDecl *Decl = D->getTemplatedDecl();
       std::string Mangled = getMangledName(CurMangleContext, Decl);
-      visitIdentifier("use", "type", getQualifiedName(Decl), Loc, Mangled,
+      visitIdentifier("use", "type", getQualifiedName(Decl), Loc,
+                      std::make_pair(Mangled, genTrace("TSTLoc.ClassTemplateDecl")),
                       QualType(), getContext(Loc));
     } else if (TypeAliasTemplateDecl *D = dyn_cast<TypeAliasTemplateDecl>(Td)) {
       NamedDecl *Decl = D->getTemplatedDecl();
       std::string Mangled = getMangledName(CurMangleContext, Decl);
-      visitIdentifier("use", "type", getQualifiedName(Decl), Loc, Mangled,
+      visitIdentifier("use", "type", getQualifiedName(Decl), Loc,
+                      std::make_pair(Mangled, genTrace("TSTLoc.TypeAliasTemplateDecl")),
                       QualType(), getContext(Loc));
     }
 
@@ -1495,20 +1640,25 @@ public:
         Flags = NoCrossref;
       }
       std::string Mangled = getMangledName(CurMangleContext, Decl);
-      visitIdentifier("use", "variable", getQualifiedName(Decl), Loc, Mangled,
+      visitIdentifier("use", "variable", getQualifiedName(Decl), Loc,
+                      std::make_pair(Mangled, genTrace("DeclRefExpr.VarDecl")),
                       D2->getType(), getContext(Loc), Flags);
     } else if (isa<FunctionDecl>(Decl)) {
+      std::string trace = "DeclRefExpr.FunctionDecl";
       const FunctionDecl *F = dyn_cast<FunctionDecl>(Decl);
       if (F->isTemplateInstantiation()) {
         Decl = F->getTemplateInstantiationPattern();
+        trace += ".tmplInstPat";
       }
 
       std::string Mangled = getMangledName(CurMangleContext, Decl);
-      visitIdentifier("use", "function", getQualifiedName(Decl), Loc, Mangled,
+      visitIdentifier("use", "function", getQualifiedName(Decl), Loc,
+                      std::make_pair(Mangled, trace),
                       E->getType(), getContext(Loc));
     } else if (isa<EnumConstantDecl>(Decl)) {
       std::string Mangled = getMangledName(CurMangleContext, Decl);
-      visitIdentifier("use", "enum", getQualifiedName(Decl), Loc, Mangled,
+      visitIdentifier("use", "enum", getQualifiedName(Decl), Loc,
+                      std::make_pair(Mangled, genTrace("DeclRefExpr.EnumConstantDecl")),
                       E->getType(), getContext(Loc));
     }
 
@@ -1535,7 +1685,8 @@ public:
 
       FieldDecl *Member = Ci->getMember();
       std::string Mangled = getMangledName(CurMangleContext, Member);
-      visitIdentifier("use", "field", getQualifiedName(Member), Loc, Mangled,
+      visitIdentifier("use", "field", getQualifiedName(Member), Loc,
+                      std::make_pair(Mangled, genTrace("CXXConstructorDecl.Init.Member")),
                       Member->getType(), getContext(D));
     }
 
@@ -1552,7 +1703,8 @@ public:
     ValueDecl *Decl = E->getMemberDecl();
     if (FieldDecl *Field = dyn_cast<FieldDecl>(Decl)) {
       std::string Mangled = getMangledName(CurMangleContext, Field);
-      visitIdentifier("use", "field", getQualifiedName(Field), Loc, Mangled,
+      visitIdentifier("use", "field", getQualifiedName(Field), Loc,
+                      std::make_pair(Mangled, genTrace("MemberExpr.FieldDecl")),
                       Field->getType(), getContext(Loc));
     }
     return true;
@@ -1585,7 +1737,8 @@ public:
     if (Ident) {
       std::string Mangled =
           std::string("M_") + mangleLocation(Loc, Ident->getName());
-      visitIdentifier("def", "macro", Ident->getName(), Loc, Mangled);
+      visitIdentifier("def", "macro", Ident->getName(), Loc,
+                      std::make_pair(Mangled, genTrace("macroDefined.Ident")));
     }
   }
 
@@ -1607,7 +1760,8 @@ public:
       std::string Mangled =
           std::string("M_") +
           mangleLocation(Macro->getDefinitionLoc(), Ident->getName());
-      visitIdentifier("use", "macro", Ident->getName(), Loc, Mangled);
+      visitIdentifier("use", "macro", Ident->getName(), Loc,
+                      std::make_pair(Mangled, genTrace("macroUsed.Ident")));
     }
   }
 };
