@@ -869,6 +869,7 @@ public:
 
       if (DependentLocations.empty()) {
         FirstDependentLoc = Loc;
+        Self->normalizeLocation(&FirstDependentLoc);
       }
       DependentLocations.insert(Loc.getRawEncoding());
       if (Parent) {
