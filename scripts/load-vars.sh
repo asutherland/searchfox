@@ -18,3 +18,10 @@ export OBJDIR=$($MOZSEARCH_PATH/scripts/read-json.py $CONFIG_FILE trees/$TREE_NA
 
 export GIT_ROOT=$($MOZSEARCH_PATH/scripts/read-json.py $CONFIG_FILE trees/$TREE_NAME/git_path)
 export BLAME_ROOT=$($MOZSEARCH_PATH/scripts/read-json.py $CONFIG_FILE trees/$TREE_NAME/git_blame_path)
+
+# prefer the list of platforms set on the tree if it exists
+export PLATFORMS=$($MOZSEARCH_PATH/scripts/read-json.py $CONFIG_FILE trees/$TREE_NAME/platforms)
+# fall back to the list of platforms in the root if that wasn't there.
+export PLATFORMS="${PLATFORMS:-$($MOZSEARCH_PATH/scripts/read-json.py $CONFIG_FILE platforms)}"
+# and finally fall back to our default set of platforms
+export PLATFORMS="${PLATFORMS:-linux64 macosx64 win64 android-armv7}"
