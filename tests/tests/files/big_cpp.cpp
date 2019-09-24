@@ -128,6 +128,16 @@ class GlobalContext {
 
 namespace outerNS {
 
+
+namespace twoNamespaces
+{ namespace onOneLine {
+
+// This is a test of making sure our format logic doesn't get confused if we
+// try and nest 2 things on the same line.
+
+} // namespace onOneLine
+} // namespace twoNamespaces
+
 #define HUMAN_HP 100
 
 class Thing {
