@@ -17,6 +17,7 @@
 #include "clang/Lex/Lexer.h"
 #include "clang/Lex/PPCallbacks.h"
 #include "clang/Lex/Preprocessor.h"
+#include "clang/Rewrite/Core/Rewriter.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -484,6 +485,8 @@ public:
 
     AstContext = &Ctx;
     TraverseDecl(Ctx.getTranslationUnitDecl());
+    //processMacroExpansions();
+    //processSavedMacroRanges();
 
     // Emit the JSON data for all files now.
     std::map<FileID, std::unique_ptr<FileInfo>>::iterator It;
@@ -920,7 +923,8 @@ public:
                        const std::vector<std::string> &Symbols,
                        Context TokenContext = Context(), int Flags = 0,
                        SourceRange PeekRange = SourceRange(),
-                       SourceRange NestingRange = SourceRange()) {
+                       SourceRange NestingRange = SourceRange(),
+                       std::string Expansion = "") {
     if (!shouldVisit(Loc)) {
       return;
     }
@@ -1031,6 +1035,10 @@ public:
       Fmt.add("no_crossref", 1);
     }
 
+    if (!Expansion.empty()) {
+      Fmt.add("expansion", Expansion);
+    }
+
     std::string Buf;
     Fmt.format(Buf);
     F->Output.push_back(std::move(Buf));
@@ -1040,10 +1048,11 @@ public:
                        std::string QualName, SourceLocation Loc, std::string Symbol,
                        Context TokenContext = Context(), int Flags = 0,
                        SourceRange PeekRange = SourceRange(),
-                       SourceRange NestingRange = SourceRange()) {
+                       SourceRange NestingRange = SourceRange(),
+                       std::string Expansion = "") {
     std::vector<std::string> V = {Symbol};
     visitIdentifier(Kind, SyntaxKind, QualName, Loc, V, TokenContext, Flags,
-                    PeekRange, NestingRange);
+                    PeekRange, NestingRange, Expansion);
   }
 
   void normalizeLocation(SourceLocation *Loc) {
@@ -1180,15 +1189,41 @@ public:
     return Range;
   }
 
+  bool VisitStmt(Stmt *S) {
+    SourceLocation Loc = S->getBeginLoc();
+
+    if (!SM.isMacroBodyExpansion(Loc)) {
+      return true;
+    }
+    Loc = SM.getFileLoc(Loc);
+
+    std::string Expansion;
+    llvm::raw_string_ostream sos(Expansion);
+    PrintingPolicy pp(LO);
+
+    S->printPretty(sos, nullptr, pp);
+
+    visitMacroExpands(Loc, sos.str());
+
+    return true;
+  }
+
   bool VisitNamedDecl(NamedDecl *D) {
     SourceLocation Loc = D->getLocation();
 
+    std::string Expansion;
     // If the token is from a macro expansion and the expansion location
     // is interesting, use that instead as it tends to be more useful.
     SourceLocation expandedLoc = Loc;
     if (SM.isMacroBodyExpansion(Loc)) {
       Loc = SM.getFileLoc(Loc);
+      // Dump the expanded decl for display purposes.
+      std::string buf;
+      llvm::raw_string_ostream sos(buf);
+      D->print(sos, 0, true);
+      Expansion = sos.str();
     }
+
 
     normalizeLocation(&Loc);
     if (!isInterestingLocation(Loc)) {
@@ -1204,6 +1239,8 @@ public:
     const char *Kind = "def";
     const char *PrettyKind = "?";
     SourceRange PeekRange(D->getBeginLoc(), D->getEndLoc());
+
+
     // The nesting range identifies the left brace and right brace, which
     // heavily depends on the AST node type.
     SourceRange NestingRange;
@@ -1321,7 +1358,7 @@ public:
     }
 
     visitIdentifier(Kind, PrettyKind, getQualifiedName(D), Loc, Symbols,
-                    getContext(D), Flags, PeekRange, NestingRange);
+                    getContext(D), Flags, PeekRange, NestingRange, Expansion);
 
     return true;
   }
@@ -1594,7 +1631,51 @@ public:
     }
   }
 
+  std::vector<SourceRange> savedMacroRanges;
+
+  void saveMacroRange(SourceRange range) {
+    savedMacroRanges.push_back(range);
+  }
+
+  void processSavedMacroRanges() {
+    for (auto iter = savedMacroRanges.begin(); iter != savedMacroRanges.end(); ++iter) {
+      //visitMacroExpands(*iter);
+    }
+    savedMacroRanges.clear();
+  }
+
+  void visitMacroExpands(SourceLocation spellBegin, std::string Expansion) {
+/*
+    SourceRange expansionRange = SourceRange(
+        SM.getExpansionLoc(useRange.getBegin()),
+        SM.getExpansionLoc(useRange.getEnd()));
+
+    SourceLocation macroBegin = useRange.getBegin();
+    SourceLocation spellBegin = SM.getSpellingLoc(macroBegin);
+*/
+        // Find the file positions corresponding to the token.
+    unsigned StartOffset = SM.getFileOffset(spellBegin);
+    unsigned EndOffset =
+      StartOffset + Lexer::MeasureTokenLength(spellBegin, SM, CI.getLangOpts());
+
+    std::string LocStr = locationToString(spellBegin, EndOffset - StartOffset);
+
+    JSONFormatter Fmt;
+    Fmt.add("loc", LocStr);
+    Fmt.add("preprocessor", 1);
+
+    //clang::Rewriter rewriter(SM, LO);
+    //std::string Expanded = rewriter.getRewrittenText(expansionRange);
+    Fmt.add("expansion", Expansion);
+
+    std::string Buf;
+    Fmt.format(Buf);
+    FileInfo *F = getFileInfo(spellBegin);
+    F->Output.push_back(std::move(Buf));
+  }
+
   void visitMacroExpansion(SourceRange range) {
+  printf("MACRO EXPANSION VISIT\n");
     SourceLocation begin = range.getBegin();
     SourceLocation spellBegin = SM.getSpellingLoc(begin);
 
@@ -1627,9 +1708,10 @@ public:
     Preprocessor &PP = CI.getPreprocessor();
     PreprocessingRecord *PR = PP.getPreprocessingRecord();
     if (!PR) {
+      printf("MOZSEARCH: no preprocessing record\n");
       return;
     }
-
+printf("MOZSEARCH: processing\n");
     for (auto It = PR->local_begin(); It != PR->local_end(); It++) {
       PreprocessedEntity *ent = *It;
       SourceRange range = ent->getSourceRange();
@@ -1646,6 +1728,8 @@ void PreprocessorHook::MacroDefined(const Token &Tok,
 void PreprocessorHook::MacroExpands(const Token &Tok, const MacroDefinition &Md,
                                     SourceRange Range, const MacroArgs *Ma) {
   Indexer->macroUsed(Tok, Md.getMacroInfo());
+  //Indexer->visitMacroExpands(Range);
+  //Indexer->saveMacroRange(Range);
 }
 
 void PreprocessorHook::MacroUndefined(const Token &Tok,
@@ -1672,22 +1756,14 @@ void PreprocessorHook::Ifndef(SourceLocation Loc, const Token &Tok,
 
 void PreprocessorHook::EndOfMainFile() {
   //Indexer->processMacroExpansions();
+  //printf("MOZSEARCH: just tried to examine macro expansion\n");
 }
 
 class IndexAction : public PluginASTAction {
 protected:
-  IndexConsumer *Indexer;
-
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                                  llvm::StringRef F) override {
-    std::unique_ptr<IndexConsumer> indexer = llvm::make_unique<IndexConsumer>(CI);
-    Indexer = indexer.get();
-    return indexer;
-  }
-
-  void EndSourceFileAction() override {
-    Indexer->processMacroExpansions();
-    Indexer = nullptr;
+    return llvm::make_unique<IndexConsumer>(CI);
   }
 
   bool ParseArgs(const CompilerInstance &CI,
