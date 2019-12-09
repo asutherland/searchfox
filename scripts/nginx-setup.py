@@ -122,6 +122,7 @@ server {
 ''' % fmt
 
 location('/static', ['root %(mozsearch_path)s;'])
+location('/ui', ['alias %(mozsearch_path)s/ui/dist;'])
 location('= /robots.txt', [
     'root %(mozsearch_path)s/static;',
     'try_files $uri =404;',

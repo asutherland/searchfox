@@ -260,19 +260,22 @@ pub fn generate_footer(
     }
 
     let scripts = [
-        "libs/jquery-2.1.3.min.js",
-        "libs/jquery.menu-aim.js",
-        "utils.js",
-        "dxr.js",
-        "context-menu.js",
-        "filter.js",
-        "panel.js",
-        "code-highlighter.js",
-        "blame.js",
+        "/static/js/libs/jquery-2.1.3.min.js",
+        "/static/js/libs/jquery.menu-aim.js",
+        "/static/js/utils.js",
+        "/static/js/dxr.js",
+        // Removed in favor of searchfox-ui.js
+        //"/static/js/context-menu.js",
+        "/static/js/filter.js",
+        "/static/js/panel.js",
+        "/static/js/code-highlighter.js",
+        "/static/js/blame.js",
+        "/ui/vendors~searchfox-ui.bundle.js",
+        "/ui/searchfox-ui.bundle.js",
     ];
     let script_tags: Vec<_> = scripts
         .iter()
-        .map(|s| F::T(format!(r#"<script src="/static/js/{}"></script>"#, s)))
+        .map(|s| F::T(format!(r#"<script src="{}"></script>"#, s)))
         .collect();
 
     let f = F::Seq(vec![
