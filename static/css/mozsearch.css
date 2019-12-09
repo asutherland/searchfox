@@ -63,6 +63,10 @@ table {
 body {
     margin: 0;
 }
+/* reassert our font declaration to override semantic-ui */
+div.content {
+  font: 12px/1.5 Arial, Helvetica, sans-serif;
+}
 h4 {
     margin: 0 0 .5rem 0;
 }
@@ -569,6 +573,9 @@ span[data-symbols]:hover {
 span[data-symbols].hovered {
   background-color: yellow;
 }
+span[data-symbols].sticky-highlight {
+  background-color: orange;
+}
 
 /* Help screen */
 .intro {
@@ -886,4 +893,9 @@ body.old-rev #fixed-header .search-box {
 
 .syn_regex {
     color: #6d7b8d;
+}
+
+/****** newer fancy stuff ********/
+.searchfox-popup-root {
+  box-sizing: border-box;
 }
