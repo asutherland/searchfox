@@ -62,3 +62,8 @@ date
 $MOZSEARCH_PATH/scripts/build-codesearch.py $CONFIG_FILE $TREE_NAME
 
 date
+
+if [[ -x "$CONFIG_REPO/$TREE_NAME/post-index" ]]
+then
+    $CONFIG_REPO/$TREE_NAME/post-index
+fi

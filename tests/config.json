@@ -13,7 +13,7 @@
     },
     "searchfox": {
       "index_path": "$WORKING/searchfox",
-      "files_path": "$WORKING/searchfox/files",
+      "files_path": "$MOZSEARCH_PATH",
       "objdir_path": "$WORKING/searchfox/objdir",
       "git_path": "$MOZSEARCH_PATH",
       "git_blame_path": "$WORKING/searchfox/blame",

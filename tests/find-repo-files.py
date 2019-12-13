@@ -17,6 +17,7 @@ repo_path = config['trees'][tree_name]['files_path']
 stdout = run('git ls-files --recurse-submodules', shell=True, cwd=repo_path)
 lines = stdout.split('\n')
 
+overlay = []
 files = []
 js = []
 idl = []
@@ -72,3 +73,8 @@ open(os.path.join(index_path, 'ipdl-files'), 'w').writelines(ipdl)
 
 open(os.path.join(index_path, 'ipdl-includes'), 'w').write(' '.join([ '-I ' + d for d in ipdl_dirs ]))
 
+# This is a hack to support gecko-docs-overlay.  The idea is that this file list
+# contains files that will end up showing up on disk and should be included in
+# directory listing, but that are not produced as part of the default indexing
+# sweep and so can't exist in repo-files or objdir-files
+open(os.path.join(index_path, 'overlay-files'), 'w').writelines(overlay)

@@ -19,7 +19,7 @@ cat $INDEX_ROOT/repo-files $INDEX_ROOT/objdir-files | \
 	     $MOZSEARCH_PATH/tools/target/release/output-file $CONFIG_FILE $TREE_NAME
 
 HG_ROOT=$(python $MOZSEARCH_PATH/scripts/read-json.py $CONFIG_FILE trees/$TREE_NAME/hg_root)
-cat $INDEX_ROOT/repo-files $INDEX_ROOT/objdir-files > /tmp/dirs
+cat $INDEX_ROOT/repo-files $INDEX_ROOT/objdir-files $INDEX_ROOT/overlay-files > /tmp/dirs
 js $MOZSEARCH_PATH/scripts/output-dir.js $FILES_ROOT $INDEX_ROOT "$HG_ROOT" $MOZSEARCH_PATH $OBJDIR $TREE_NAME /tmp/dirs
 
 js $MOZSEARCH_PATH/scripts/output-template.js $FILES_ROOT $INDEX_ROOT $MOZSEARCH_PATH $TREE_NAME
