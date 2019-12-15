@@ -13,6 +13,19 @@
 # listings), but that could just as easily be accomplished with slightly fancier
 # location directives.
 
+# Create our nginx configuration.
+#
+# The general scheme is `TREE/SERVICE/...` where SERVICE is "source" or
+# "raw-analysis" for files available on disk and various dynamic requests that
+# get proxied to per-tree local servers running on localhost.
+#
+# We have a docroot at /home/ubuntu/docroot that provides a place to decide what
+# gets exposed in the root of the origin.  It also is used for the "source"
+# mapping with symlinks helping map into /home/ubuntu/index/TREE/file (for
+# rendered source files) and /home/ubuntu/index/TREE/dir (for rendered directory
+# listings), but that could just as easily be accomplished with slightly fancier
+# location directives.
+
 import sys
 import json
 import os.path
@@ -159,6 +172,7 @@ for repo in config['trees']:
     fmt['repo'] = repo
     fmt['head'] = head_rev
 
+    #
     location('/%(repo)s/source', [
         'root %(doc_root)s;',
         'try_files /file/$uri /dir/$uri/index.html =404;',
