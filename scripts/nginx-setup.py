@@ -172,7 +172,11 @@ for repo in config['trees']:
         'root %(doc_root)s;',
         'try_files /raw-analysis/$uri =404;',
         'types { }',
-        'default_type application/x-ndjson;',
+        # I tried serving this as application/x-ndjson but then something weird
+        # happened content-encoding-wise.  The received response was content
+        # encoded but the response headers didn't express it, so Firefox didn't
+        # decode the result.
+        'default_type text/plain;',
         'add_header Cache-Control "must-revalidate";',
     ])
 
