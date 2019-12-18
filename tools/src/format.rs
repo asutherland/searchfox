@@ -27,8 +27,9 @@ use crate::config;
 #[derive(Debug)]
 pub struct FormattedLine {
     pub line: String,
-    // True if this line should open a new <div> and its <code> line should be position: sticky.
-    pub starts_nest: bool,
+    // If this line should open a new <div> and its <code> line should be position: sticky, this
+    // has a String which is the symbol starting the nest.
+    pub sym_starts_nest: Option<String>,
     // This line should close this many <div>'s.
     pub pop_nest_count: u32,
 }
@@ -59,7 +60,7 @@ pub fn format_code(
     // use case is making the entire line position:sticky, it only makes sense to create a single
     // range in that case.)
     let mut nesting_stack: Vec<&AnalysisSource> = Vec::new();
-    let mut starts_nest = false;
+    let mut starts_nest: Option<String> = None;
 
     fn fixup(s: String) -> String {
         s.replace("\r", "\u{21A9}") // U+21A9 = LEFTWARDS ARROW WITH HOOK.
@@ -118,7 +119,7 @@ pub fn format_code(
 
                 output_lines.push(FormattedLine {
                     line: fixup(output),
-                    starts_nest: starts_nest,
+                    sym_starts_nest: starts_nest.take(),
                     pop_nest_count: pop_count as u32,
                 });
                 output = String::new();
@@ -126,8 +127,6 @@ pub fn format_code(
                 cur_line += 1;
                 line_start = token.end;
                 last = token.end;
-
-                starts_nest = false;
 
                 continue;
             }
@@ -187,7 +186,7 @@ pub fn format_code(
                         }
                     };
                     if nests {
-                        starts_nest = true;
+                        starts_nest = Some(a.sym.first().unwrap().clone());
                         nesting_stack.push(a);
                     }
 
@@ -338,7 +337,7 @@ pub fn format_code(
     if output.len() > 0 {
         output_lines.push(FormattedLine {
             line: fixup(output),
-            starts_nest: starts_nest,
+            sym_starts_nest: starts_nest.take(),
             pop_nest_count: nesting_stack.len() as u32,
         });
     }
@@ -547,8 +546,12 @@ pub fn format_file_data(
         // If this line starts nesting, we need to create a div that exists strictly to contain the
         // position:sticky element.
         let mut maybe_nesting_style = String::new();
-        if line.starts_nest {
-            write!(writer, "<div class=\"nesting-container\">").unwrap();
+        if let Some(nest_sym) = &line.sym_starts_nest {
+            write!(
+                writer,
+                "<div class=\"nesting-container\" data-nesting-sym=\"{}\">",
+                nest_sym
+            ).unwrap();
             nest_depth += 1;
             maybe_nesting_style = format!(" nesting-depth-{}", nest_depth);
         }
