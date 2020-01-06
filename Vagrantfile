@@ -11,7 +11,7 @@ Vagrant.configure("2") do |config|
   config.vm.provider "virtualbox" do |v, override|
     override.vm.synced_folder './', '/vagrant'
 
-    v.memory = 10000
+    v.memory = 16000
     v.cpus = 4
   end
 
@@ -19,7 +19,7 @@ Vagrant.configure("2") do |config|
     # Need to do this manually for libvirt...
     override.vm.synced_folder './', '/vagrant', type: 'nfs', nfs_udp: false, accessmode: "squash"
 
-    v.memory = 10000
+    v.memory = 16000
     v.cpus = 4
   end
 end
