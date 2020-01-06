@@ -9,6 +9,7 @@
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/Mangle.h"
+#include "clang/AST/RecordLayout.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/Version.h"
@@ -18,6 +19,7 @@
 #include "clang/Lex/PPCallbacks.h"
 #include "clang/Lex/Preprocessor.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <iostream>
@@ -912,6 +914,60 @@ public:
     OperatorToken = 1 << 1,
   };
 
+  void emitStructuredInfo(SourceLocation Loc, const RecordDecl *decl) {
+    std::string json_str;
+    llvm::raw_string_ostream ros(json_str);
+    llvm::json::OStream J(ros);
+
+    unsigned StartOffset = SM.getFileOffset(Loc);
+    unsigned EndOffset =
+        StartOffset + Lexer::MeasureTokenLength(Loc, SM, CI.getLangOpts());
+    J.attribute("loc", locationToString(Loc, EndOffset - StartOffset));
+
+    const ASTContext &C = *AstContext;
+    const ASTRecordLayout &Layout = C.getASTRecordLayout(decl);
+
+    J.attribute("sizeBytes", Layout.getSize().getQuantity());
+
+    J.attributeBegin("fields");
+    J.arrayBegin();
+    uint64_t iField = 0;
+    for (RecordDecl::field_iterator It = decl->field_begin(),
+          End = decl->field_end(); It != End; ++It, ++iField) {
+      const FieldDecl &Field = **It;
+      uint64_t localOffsetBits = Layout.getFieldOffset(iField);
+      CharUnits localOffsetBytes = C.toCharUnitsFromBits(localOffsetBits);
+
+      J.objectBegin();
+      J.attribute("pretty", getQualifiedName(&Field));
+      J.attribute("sym", getMangledName(CurMangleContext, &Field));
+      QualType FieldType = Field.getType();
+      J.attribute("type", FieldType.getAsString());
+      QualType CanonicalFieldType = FieldType.getCanonicalType();
+      const TagDecl *tagDecl = CanonicalFieldType->getAsTagDecl();
+      if (tagDecl) {
+        J.attribute("typesym", getMangledName(CurMangleContext, tagDecl));
+      }
+      J.attribute("offsetBytes", localOffsetBytes.getQuantity());
+      if (Field.isBitField()) {
+        J.attributeBegin("bitPositions");
+        J.objectBegin();
+
+        J.attribute("begin", unsigned(localOffsetBits - C.toBits(localOffsetBytes)));
+        J.attribute("width", Field.getBitWidthValue(C));
+
+        J.objectEnd();
+        J.attributeEnd();
+      }
+      J.objectEnd();
+    }
+    J.arrayEnd();
+    J.attributeEnd();
+
+    FileInfo *F = getFileInfo(Loc);
+    F->Output.push_back(std::move(ros.str()));
+  }
+
   // XXX Type annotating.
   // QualType is the type class.  It has helpers like TagDecl via getAsTagDecl.
   // ValueDecl exposes a getType() method.
@@ -1351,6 +1407,13 @@ public:
     visitIdentifier(Kind, PrettyKind, getQualifiedName(D), Loc, Symbols,
                     qtype,
                     getContext(D), Flags, PeekRange, NestingRange);
+
+    // In-progress structured info emission.
+    if (RecordDecl *D2 = dyn_cast<RecordDecl>(D)) {
+      if (D2->isThisDeclarationADefinition()) {
+        emitStructuredInfo(Loc, D2);
+      }
+    }
 
     return true;
   }
