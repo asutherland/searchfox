@@ -41,6 +41,13 @@
 #define getBeginLoc getLocStart
 #define getEndLoc getLocEnd
 #endif
+// Clang 10 builds with c++14 which make std::make_unique available, but is not
+// exposed by <memory> in c++11 which is what clang 9 builds with.
+#if CLANG_VERSION_MAJOR < 10
+using llvm::make_unique;
+#else
+using std::make_unique;
+#endif
 
 using namespace clang;
 
@@ -200,7 +207,7 @@ private:
           Absolute = Filename;
         }
       }
-      std::unique_ptr<FileInfo> Info = std::make_unique<FileInfo>(Absolute);
+      std::unique_ptr<FileInfo> Info = make_unique<FileInfo>(Absolute);
       It = FileMap.insert(std::make_pair(Id, std::move(Info))).first;
     }
     return It->second.get();
@@ -454,7 +461,7 @@ public:
       : CI(CI), SM(CI.getSourceManager()), LO(CI.getLangOpts()), CurMangleContext(nullptr),
         AstContext(nullptr), CurDeclContext(nullptr), TemplateStack(nullptr) {
     CI.getPreprocessor().addPPCallbacks(
-        std::make_unique<PreprocessorHook>(this));
+        make_unique<PreprocessorHook>(this));
   }
 
   virtual DiagnosticConsumer *clone(DiagnosticsEngine &Diags) const {
@@ -1740,7 +1747,7 @@ class IndexAction : public PluginASTAction {
 protected:
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                                  llvm::StringRef F) {
-    return std::make_unique<IndexConsumer>(CI);
+    return make_unique<IndexConsumer>(CI);
   }
 
   bool ParseArgs(const CompilerInstance &CI,
