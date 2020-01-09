@@ -41,9 +41,14 @@
 #define getBeginLoc getLocStart
 #define getEndLoc getLocEnd
 #endif
-// Clang 10 builds with c++14 which make std::make_unique available, but is not
-// exposed by <memory> in c++11 which is what clang 9 builds with.
-#if CLANG_VERSION_MAJOR < 10
+// We want std::make_unique, but that's only available in c++14.  In versions
+// prior to that, we need to fall back to llvm's make_unique.  It's also the
+// case that we expect clang 10 to build with c++14 and clang 9 and earlier to
+// build with c++11, at least as suggested by the llvm-config --cxxflags on
+// non-windows platforms.  mozilla-central seems to build with -std=c++17 on
+// windows so we need to make this decision based on __cplusplus instead of
+// the CLANG_VERSION_MAJOR.
+#if __cplusplus < 201402L
 using llvm::make_unique;
 #else
 using std::make_unique;
