@@ -131,7 +131,7 @@ function generate(content, opt)
 </div>
 
 <div id="scrolling">
-  <div id="content" class="content" data-no-results="No results for current query.">
+  <div id="content" class="mozsearch-content" data-no-results="No results for current query.">
     ${content}
   </div>
 
