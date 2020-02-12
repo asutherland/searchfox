@@ -19,6 +19,10 @@
 
 #include "big_header.h"
 
+// This is a forward declaration of GlobalContext and should be emitted as a
+// "forward" rather than a decl.
+class GlobalContext;
+
 /**
  * It's not local, it's global.  And it's got the documentation kids crave.
  *
