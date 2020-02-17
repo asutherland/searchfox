@@ -11,11 +11,6 @@ use crate::data::GlobalCrateId;
 use crate::data::{DefKind, ImplKind};
 use rls_analysis::{AnalysisHost, AnalysisLoader, SearchDirectory};
 use std::collections::{BTreeSet, HashMap};
-<<<<<<< HEAD
-=======
-use std::io;
-use std::io::{BufRead, BufReader, Read, Seek};
->>>>>>> f768936... Review fixes.  To be squashed!  Many thanks to kats and emilio!
 use std::fs::{self, File};
 use std::io;
 use std::io::{BufRead, BufReader, Read, Seek};
@@ -276,17 +271,12 @@ fn recursive_union_spans_of_def(
 
 /// Given a list of ids of defs, run recursive_union_spans_of_def on all of them and union up the
 /// result.  Necessary for when dealing with impls.
-<<<<<<< HEAD
 fn union_spans_of_defs(
     initial_span: &data::SpanData,
     ids: &[data::Id],
     file_analysis: &data::Analysis,
     defs: &Defs,
 ) -> data::SpanData {
-=======
-fn union_spans_of_defs(initial_span: &data::SpanData, ids: &[data::Id], file_analysis: &data::Analysis,
-                       defs: &Defs) -> data::SpanData {
->>>>>>> f768936... Review fixes.  To be squashed!  Many thanks to kats and emilio!
     let mut span = initial_span.clone();
     for id in ids {
         let kid = defs.get(file_analysis, *id);
@@ -467,11 +457,7 @@ fn extract_span_from_source_as_string(
     match extract_span_from_source_as_buffer(&mut reader, &span) {
         Ok(buffer) => match String::from_utf8(buffer.into_vec()) {
             Ok(s) => Some(s),
-<<<<<<< HEAD
             Err(_) => None,
-=======
-            Err(_) => None
->>>>>>> f768936... Review fixes.  To be squashed!  Many thanks to kats and emilio!
         },
         Err(e) => {
             error!("ERROR: Unable to read file: {:?}", e);
@@ -505,11 +491,7 @@ fn analyze_file(
     // analysis data.  Some analysis information may not be emitted if we are unable to access the
     let maybe_source_file = match File::open(&file_name) {
         Ok(f) => Some(f),
-<<<<<<< HEAD
         Err(_) => None,
-=======
-        Err(_) => None
->>>>>>> f768936... Review fixes.  To be squashed!  Many thanks to kats and emilio!
     };
 
     let output_file = tree_info.output_dir.join(file);
@@ -619,11 +601,7 @@ fn analyze_file(
 
             let name = match extract_span_from_source_as_string(&mut source_file, &imp.span) {
                 Some(s) => s,
-<<<<<<< HEAD
                 None => continue,
-=======
-                None => continue
->>>>>>> f768936... Review fixes.  To be squashed!  Many thanks to kats and emilio!
             };
 
             let crate_id = &file_analysis.prelude.as_ref().unwrap().crate_id;
@@ -633,7 +611,6 @@ fn analyze_file(
             let maybe_nested = ignore_boring_spans(&nested_span);
             // XXX visit_common currently never emits any syntax types; we want to pretend this is
             // a namespace once it does.
-<<<<<<< HEAD
             visit_common(
                 &mut dataset,
                 AnalysisKind::Def,
@@ -643,10 +620,6 @@ fn analyze_file(
                 None,
                 maybe_nested,
             )
-=======
-            visit_common(&mut dataset, AnalysisKind::Def, &imp.span, &qualname, &pretty,
-                         None, maybe_nested)
->>>>>>> f768936... Review fixes.  To be squashed!  Many thanks to kats and emilio!
         }
     }
 
