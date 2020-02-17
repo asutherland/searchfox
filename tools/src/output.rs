@@ -261,16 +261,12 @@ pub fn generate_footer(
 
     let scripts = [
         "/static/js/libs/jquery-2.1.3.min.js",
-        "/static/js/libs/jquery.menu-aim.js",
         "/static/js/utils.js",
         "/static/js/dxr.js",
-        // Removed in favor of searchfox-ui.js
-        //"/static/js/context-menu.js",
         "/static/js/filter.js",
         "/static/js/panel.js",
         "/static/js/code-highlighter.js",
         "/static/js/blame.js",
-        "/ui/vendors~searchfox-ui.bundle.js",
         "/ui/searchfox-ui.bundle.js",
     ];
     let script_tags: Vec<_> = scripts
