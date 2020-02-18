@@ -33,6 +33,13 @@ build-test-repo: check-in-vagrant build-clang-plugin build-rust-tools build-ui
 	/vagrant/infrastructure/web-server-setup.sh /vagrant/tests config.json ~/index ~
 	/vagrant/infrastructure/web-server-run.sh /vagrant/tests ~/index ~
 
+# Hacky target to help quickly test the merge logic by running it on a single
+# known file once with just the file and once with the file merged against
+# itself.
+hacky-merge-test-repo:
+	/vagrant/tools/target/release/merge-analyses ~/index/tests/analysis/big_cpp.cpp > ~/index/tests/analysis/merged_big_cpp.cpp
+	/vagrant/tools/target/release/merge-analyses ~/index/tests/analysis/big_cpp.cpp ~/index/tests/analysis/big_cpp.cpp > ~/index/tests/analysis/selfmerged_big_cpp.cpp
+
 build-searchfox-repo: check-in-vagrant build-clang-plugin build-rust-tools build-ui
 	mkdir -p ~/searchfox-index
 	/vagrant/infrastructure/indexer-setup.sh /vagrant/tests searchfox-config.json ~/searchfox-index
