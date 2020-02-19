@@ -26,6 +26,7 @@
 #include <map>
 #include <memory>
 #include <sstream>
+#include <string>
 #include <tuple>
 #include <unordered_set>
 
@@ -35,12 +36,6 @@
 #include "FileOperations.h"
 #include "JSONFormatter.h"
 #include "StringOperations.h"
-
-// What's the maximum line length we support?  If there's a line longer than
-// this, we corrupt it.  We previously had hardcoded this to 64k and with the
-// structured record, we hit the limit.  As I bump this, I'm also altering an
-// initial overly verbose method of expressing field/method booleans.
-#define MAX_LINE_LENGTH 256000
 
 #if CLANG_VERSION_MAJOR < 8
 // Starting with Clang 8.0 some basic functions have been renamed
@@ -533,16 +528,23 @@ public:
       // overwrite them, we want to merge our results with what was already
       // there. This ensures that header files that are included multiple times
       // in different ways are analyzed completely.
-      char Buffer[MAX_LINE_LENGTH];
       FILE *Fp = Lock.openFile("rb");
       if (!Fp) {
         fprintf(stderr, "Unable to open input file %s\n", Filename.c_str());
         exit(1);
       }
-      while (fgets(Buffer, sizeof(Buffer), Fp)) {
-        Lines.push_back(std::string(Buffer));
+      // Because our "structured" record type can produce HUGE lines, it is
+      // necessary to use a dynamically sized line.  (In particular, nsGKAtoms.h
+      // ends up declaring a record with > 2500 fields.)
+      char *raw_line = nullptr;
+      size_t raw_size = 0;
+      while ((getline(&raw_line, &raw_size, Fp)) != -1) {
+        Lines.push_back(std::string(raw_line));
       }
       fclose(Fp);
+      if (raw_line) {
+        free(raw_line);
+      }
 
       // Insert the newly generated analysis data into what was read. Sort the
       // results and then remove duplicates.
