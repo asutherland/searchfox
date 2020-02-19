@@ -37,7 +37,7 @@ $("#scrolling").on('scroll', function() {
   // Our logic can't work on our diff output because there will be line number
   // discontinuities and line numbers that are simply missing.
   const contentElem = document.getElementById('content');
-  if (contentElem.classList.contains('diff')) {
+  if (!contentElem || contentElem.classList.contains('diff')) {
     return;
   }
 
@@ -45,6 +45,10 @@ $("#scrolling").on('scroll', function() {
   const firstSourceY = scrolling.offsetTop;
   // The goal is to make sure we're in the area the source line numbers live.
   const lineForSizing = document.querySelector('.line-number');
+  // Directory listings don't have line numbers and don't get position: sticky.
+  if (!lineForSizing) {
+    return;
+  }
   const sourceLinesX = lineForSizing.offsetLeft + 6;
   const lineHeight = lineForSizing.offsetHeight;
 
