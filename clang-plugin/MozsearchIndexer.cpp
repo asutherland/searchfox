@@ -30,6 +30,8 @@
 #include <tuple>
 #include <unordered_set>
 
+#define _POSIX_C_SOURCE 200809L
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -576,24 +578,6 @@ public:
     }
   }
 
-  // Return a list of mangled names of all the methods that the given method
-  // overrides.
-  void findOverriddenMethods(const CXXMethodDecl *Method,
-                             std::vector<std::string> &Symbols) {
-    std::string Mangled = getMangledName(CurMangleContext, Method);
-    Symbols.push_back(Mangled);
-
-    CXXMethodDecl::method_iterator Iter = Method->begin_overridden_methods();
-    CXXMethodDecl::method_iterator End = Method->end_overridden_methods();
-    for (; Iter != End; Iter++) {
-      const CXXMethodDecl *Decl = *Iter;
-      if (Decl->isTemplateInstantiation()) {
-        Decl = dyn_cast<CXXMethodDecl>(Decl->getTemplateInstantiationPattern());
-      }
-      return findOverriddenMethods(Decl, Symbols);
-    }
-  }
-
   // Unfortunately, we have to override all these methods in order to track the
   // context we're inside.
 
@@ -664,11 +648,11 @@ public:
     std::string Name;
 
     // Ultimately this becomes the "contextsym" JSON property.
-    std::vector<std::string> Symbols;
+    std::string Symbol;
 
     Context() {}
-    Context(std::string Name, std::vector<std::string> Symbols)
-        : Name(Name), Symbols(Symbols) {}
+    Context(std::string Name, std::string Symbol)
+        : Name(Name), Symbol(Symbol) {}
   };
 
   Context translateContext(NamedDecl *D) {
@@ -677,12 +661,7 @@ public:
       D = F->getTemplateInstantiationPattern();
     }
 
-    std::vector<std::string> Symbols = {getMangledName(CurMangleContext, D)};
-    if (CXXMethodDecl::classof(D)) {
-      Symbols.clear();
-      findOverriddenMethods(dyn_cast<CXXMethodDecl>(D), Symbols);
-    }
-    return Context(D->getQualifiedNameAsString(), Symbols);
+    return Context(D->getQualifiedNameAsString(), getMangledName(CurMangleContext, D));
   }
 
   Context getContext(SourceLocation Loc) {
@@ -716,32 +695,6 @@ public:
       Ctxt = Ctxt->Prev;
     }
     return Context();
-  }
-
-  static std::string concatSymbols(const std::vector<std::string> Symbols) {
-    if (Symbols.empty()) {
-      return "";
-    }
-
-    size_t Total = 0;
-    for (auto It = Symbols.begin(); It != Symbols.end(); It++) {
-      Total += It->length();
-    }
-    Total += Symbols.size() - 1;
-
-    std::string SymbolList;
-    SymbolList.reserve(Total);
-
-    for (auto It = Symbols.begin(); It != Symbols.end(); It++) {
-      std::string Symbol = *It;
-
-      if (It != Symbols.begin()) {
-        SymbolList.push_back(',');
-      }
-      SymbolList.append(Symbol);
-    }
-
-    return SymbolList;
   }
 
   // Analyzing template code is tricky. Suppose we have this code:
@@ -1113,6 +1066,14 @@ public:
       for (const CXXMethodDecl *MethodDecl : cxxDecl->overridden_methods()) {
         J.objectBegin();
 
+        // TODO: Make sure we're doing template traversals appropriately...
+        // findOverriddenMethods (now removed) liked to do:
+        //   if (Decl->isTemplateInstantiation()) {
+        //     Decl = dyn_cast<CXXMethodDecl>(Decl->getTemplateInstantiationPattern());
+        //   }
+        // I think our pre-emptive dereferencing/avoidance of templates may
+        // protect us from this, but it needs more investigation.
+
         J.attribute("pretty", getQualifiedName(MethodDecl));
         J.attribute("sym", getMangledName(CurMangleContext, MethodDecl));
 
@@ -1228,7 +1189,7 @@ public:
   // called for each identifier that corresponds to a symbol.
   void visitIdentifier(const char *Kind, const char *SyntaxKind,
                        std::string QualName, SourceLocation Loc,
-                       const std::vector<std::string> &Symbols,
+                       std::string Symbol,
                        QualType MaybeType = QualType(),
                        Context TokenContext = Context(), int Flags = 0,
                        SourceRange PeekRange = SourceRange(),
@@ -1257,55 +1218,30 @@ public:
 
     FileInfo *F = getFileInfo(Loc);
 
-    std::string SymbolList;
+    if (!(Flags & NoCrossref)) {
+      JSONFormatter Fmt;
 
-    // Reserve space in symbolList for everything in `symbols`. `symbols` can
-    // contain some very long strings.
-    size_t Total = 0;
-    for (auto It = Symbols.begin(); It != Symbols.end(); It++) {
-      Total += It->length();
-    }
-
-    // Space for commas.
-    Total += Symbols.size() - 1;
-    SymbolList.reserve(Total);
-
-    // For each symbol, generate one "target":1 item. We want to find this line
-    // if someone searches for any one of these symbols.
-    for (auto It = Symbols.begin(); It != Symbols.end(); It++) {
-      std::string Symbol = *It;
-
-      if (!(Flags & NoCrossref)) {
-        JSONFormatter Fmt;
-
-        Fmt.add("loc", LocStr);
-        Fmt.add("target", 1);
-        Fmt.add("kind", Kind);
-        Fmt.add("pretty", QualName);
-        Fmt.add("sym", Symbol);
-        if (!TokenContext.Name.empty()) {
-          Fmt.add("context", TokenContext.Name);
+      Fmt.add("loc", LocStr);
+      Fmt.add("target", 1);
+      Fmt.add("kind", Kind);
+      Fmt.add("pretty", QualName);
+      Fmt.add("sym", Symbol);
+      if (!TokenContext.Name.empty()) {
+        Fmt.add("context", TokenContext.Name);
+      }
+      if (!TokenContext.Symbol.empty()) {
+        Fmt.add("contextsym", TokenContext.Symbol);
+      }
+      if (PeekRange.isValid()) {
+        PeekRangeStr = lineRangeToString(PeekRange);
+        if (!PeekRangeStr.empty()) {
+          Fmt.add("peekRange", PeekRangeStr);
         }
-        std::string ContextSymbol = concatSymbols(TokenContext.Symbols);
-        if (!ContextSymbol.empty()) {
-          Fmt.add("contextsym", ContextSymbol);
-        }
-        if (PeekRange.isValid()) {
-          PeekRangeStr = lineRangeToString(PeekRange);
-          if (!PeekRangeStr.empty()) {
-            Fmt.add("peekRange", PeekRangeStr);
-          }
-        }
-
-        std::string S;
-        Fmt.format(S);
-        F->Output.push_back(std::move(S));
       }
 
-      if (It != Symbols.begin()) {
-        SymbolList.push_back(',');
-      }
-      SymbolList.append(Symbol);
+      std::string S;
+      Fmt.format(S);
+      F->Output.push_back(std::move(S));
     }
 
     // Generate a single "source":1 for all the symbols. If we search from here,
@@ -1347,7 +1283,7 @@ public:
     Pretty.append(QualName);
     Fmt.add("pretty", Pretty);
 
-    Fmt.add("sym", SymbolList);
+    Fmt.add("sym", Symbol);
 
     if (Flags & NoCrossref) {
       Fmt.add("no_crossref", 1);
@@ -1356,17 +1292,6 @@ public:
     std::string Buf;
     Fmt.format(Buf);
     F->Output.push_back(std::move(Buf));
-  }
-
-  void visitIdentifier(const char *Kind, const char *SyntaxKind,
-                       std::string QualName, SourceLocation Loc, std::string Symbol,
-                       QualType MaybeType = QualType(),
-                       Context TokenContext = Context(), int Flags = 0,
-                       SourceRange PeekRange = SourceRange(),
-                       SourceRange NestingRange = SourceRange()) {
-    std::vector<std::string> V = {Symbol};
-    visitIdentifier(Kind, SyntaxKind, QualName, Loc, V, MaybeType, TokenContext,
-                    Flags, PeekRange, NestingRange);
   }
 
   void normalizeLocation(SourceLocation *Loc) {
@@ -1612,11 +1537,7 @@ public:
     PeekRange = validateRange(Loc, PeekRange);
     NestingRange = validateRange(Loc, NestingRange);
 
-    std::vector<std::string> Symbols = {getMangledName(CurMangleContext, D)};
-    if (CXXMethodDecl::classof(D)) {
-      Symbols.clear();
-      findOverriddenMethods(dyn_cast<CXXMethodDecl>(D), Symbols);
-    }
+    std::string Symbol = getMangledName(CurMangleContext, D);
 
     // In the case of destructors, Loc might point to the ~ character. In that
     // case we want to skip to the name of the class. However, Loc might also
@@ -1650,7 +1571,7 @@ public:
       }
     }
 
-    visitIdentifier(Kind, PrettyKind, getQualifiedName(D), Loc, Symbols,
+    visitIdentifier(Kind, PrettyKind, getQualifiedName(D), Loc, Symbol,
                     qtype,
                     getContext(D), Flags, PeekRange, NestingRange);
 
