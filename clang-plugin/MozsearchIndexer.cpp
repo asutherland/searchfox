@@ -526,34 +526,23 @@ public:
 
       std::vector<std::string> Lines;
 
-      // Read all the existing lines in from the output file. Rather than
-      // overwrite them, we want to merge our results with what was already
-      // there. This ensures that header files that are included multiple times
-      // in different ways are analyzed completely.
-      FILE *Fp = Lock.openFile("rb");
-      if (!Fp) {
-        fprintf(stderr, "Unable to open input file %s\n", Filename.c_str());
-        exit(1);
-      }
-      // Because our "structured" record type can produce HUGE lines, it is
-      // necessary to use a dynamically sized line.  (In particular, nsGKAtoms.h
-      // ends up declaring a record with > 2500 fields.)
-      char *raw_line = nullptr;
-      size_t raw_size = 0;
-      // XXX this doesn't work on our windows taskcluster builds because it's a
-      // POSIX extension that's not available to whatever stdlib/headers we're
-      // using.  It might start working if we switch to mingw headers, but we
-      // probably can't wait.
-      //
-      // A complicating factor is moving to C++ ifstream stuff means some level
-      // of overhaul is potentially necessary for AutoLockFile because it's also
-      // a portability problem to create an ifstream from an FD/File*.
-      while ((getline(&raw_line, &raw_size, Fp)) != -1) {
-        Lines.push_back(std::string(raw_line));
-      }
-      fclose(Fp);
-      if (raw_line) {
-        free(raw_line);
+      {
+        // Read all the existing lines in from the output file. Rather than
+        // overwrite them, we want to merge our results with what was already
+        // there. This ensures that header files that are included multiple times
+        // in different ways are analyzed completely.
+        std::istream &Is = Lock.openFileAsStream(true);
+        if (!Is.good()) {
+          fprintf(stderr, "Unable to open input file %s\n", Filename.c_str());
+          exit(1);
+        }
+
+        std::string line;
+        while (std::getline(Is, line)) {
+          line += '\n';
+          Lines.push_back(line);
+        }
+        Lock.closeFileStream();
       }
 
       // Insert the newly generated analysis data into what was read. Sort the
@@ -566,7 +555,7 @@ public:
 
       // Overwrite the output file with the merged data. Since we have the lock,
       // this will happen atomically.
-      Fp = Lock.openFile("wb");
+      FILE *Fp = Lock.openFile("wb");
       if (!Fp) {
         fprintf(stderr, "Unable to open output file %s\n", Filename.c_str());
         exit(1);
