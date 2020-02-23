@@ -32,6 +32,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 
+#include <cstdio>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -539,6 +540,14 @@ public:
       // ends up declaring a record with > 2500 fields.)
       char *raw_line = nullptr;
       size_t raw_size = 0;
+      // XXX this doesn't work on our windows taskcluster builds because it's a
+      // POSIX extension that's not available to whatever stdlib/headers we're
+      // using.  It might start working if we switch to mingw headers, but we
+      // probably can't wait.
+      //
+      // A complicating factor is moving to C++ ifstream stuff means some level
+      // of overhaul is potentially necessary for AutoLockFile because it's also
+      // a portability problem to create an ifstream from an FD/File*.
       while ((getline(&raw_line, &raw_size, Fp)) != -1) {
         Lines.push_back(std::string(raw_line));
       }
