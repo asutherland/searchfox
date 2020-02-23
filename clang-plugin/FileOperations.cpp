@@ -14,6 +14,10 @@
 #include <windows.h>
 #include "StringOperations.h"
 #else
+#include <ext/stdio_filebuf.h>
+#include <iostream>
+#include <fstream>
+#include <string>
 #include <sys/file.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -50,6 +54,9 @@ void ensurePath(std::string Path) {
 }
 
 #if defined(_WIN32) || defined(_WIN64)
+// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+// # Begin Windows Platform-Specific Stuff
+
 AutoLockFile::AutoLockFile(const std::string &Filename) {
   std::string Hash = hash(Filename);
   std::string MutexName = std::string("Local\\searchfox-") + Hash;
@@ -68,6 +75,9 @@ AutoLockFile::AutoLockFile(const std::string &Filename) {
 }
 
 AutoLockFile::~AutoLockFile() {
+  // idempotent, safe.
+  closeFileStream();
+
   _close(FileDescriptor);
 
   ReleaseMutex(Handle);
@@ -83,6 +93,25 @@ FILE *AutoLockFile::openFile(const char *Mode) {
   return _fdopen(_dup(FileDescriptor), Mode);
 }
 
+std::istream &AutoLockFile::openFileAsStream(bool ForReading) {
+  mStreamFile = openFile(ForReading ? "rb" : "wb");
+  mStream = new std::ifstream(mStreamFile);
+
+  return *mStream;
+}
+
+void AutoLockFile::closeFileStream() {
+  if (mStream) {
+    delete mStream;
+    mStream = nullptr;
+  }
+
+  if (mStreamFile) {
+    fclose(mStreamFile);
+    mStreamFile = nullptr;
+  }
+}
+
 bool AutoLockFile::truncateFile(size_t Length) {
   return _chsize(FileDescriptor, Length) == 0;
 }
@@ -94,7 +123,11 @@ std::string getAbsolutePath(const std::string &Filename) {
   }
   return std::string(Full);
 }
+
 #else
+// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+// # Begin non-Windows Platform-Specific Stuff
+
 AutoLockFile::AutoLockFile(const std::string &Filename) {
   FileDescriptor = open(Filename.c_str(), O_RDWR | O_CREAT, 0666);
   if (FileDescriptor == -1) {
@@ -109,13 +142,38 @@ AutoLockFile::AutoLockFile(const std::string &Filename) {
   } while (true);
 }
 
-AutoLockFile::~AutoLockFile() { close(FileDescriptor); }
+AutoLockFile::~AutoLockFile() {
+  // idempotent, safe.
+  closeFileStream();
+
+  close(FileDescriptor);
+}
 
 bool AutoLockFile::success() { return FileDescriptor != -1; }
 
 FILE *AutoLockFile::openFile(const char *Mode) {
   lseek(FileDescriptor, 0, SEEK_SET);
   return fdopen(dup(FileDescriptor), Mode);
+}
+
+std::istream &AutoLockFile::openFileAsStream(bool ForReading) {
+  mFileBuf = new __gnu_cxx::stdio_filebuf<char>(
+    dup(FileDescriptor), ForReading ? std::ios::in : std::ios::out);
+  mStream = new std::istream(mFileBuf);
+
+  return *mStream;
+}
+
+void AutoLockFile::closeFileStream() {
+  if (mStream) {
+    delete mStream;
+    mStream = nullptr;
+  }
+
+  if (mFileBuf) {
+    delete mFileBuf;
+    mFileBuf = nullptr;
+  }
 }
 
 bool AutoLockFile::truncateFile(size_t Length) {
