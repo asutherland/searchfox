@@ -61,9 +61,6 @@ $(function() {
 
   var timeouts = {};
   timeouts.search = 300;
-  // We start the history timeout after the search updates (i.e., after
-  // timeouts.search has elapsed).
-  timeouts.history = 2000 - timeouts.search;
 
   // Check if the currently loaded page has a hash in the URL
   if (window.location.hash) {
@@ -71,9 +68,13 @@ $(function() {
   }
 
   // We also need to cater for the above scenario when a user clicks on in page links.
+// XXX disabling this to simplify what's going on in the fancy branch which
+// explicitly is calling createSyntheticAnchor when it thinks is appropriate.
+/*
   window.onhashchange = function() {
     createSyntheticAnchor(window.location.hash.substr(1));
   };
+*/
 
   /**
    * Hang an advisory message off the search field.
@@ -126,7 +127,6 @@ $(function() {
   regexpBox = $('#regexp'),
   contentContainer = $('#content'),
   waiter = null,
-  historyWaiter = null,
   nextRequestNumber = 1, // A monotonically increasing int that keeps old AJAX requests in flight from overwriting the results of newer ones, in case more than one is in flight simultaneously and they arrive out of order.
   requestsInFlight = 0,  // Number of search requests in flight, so we know whether to hide the activity indicator
   displayedRequestNumber = 0,
@@ -181,18 +181,10 @@ $(function() {
   window.buildAjaxURL = buildAjaxURL; // expose for context-menu.js
 
   /**
-   * Add an entry into the history stack whenever we do a new search.
-   */
-  function pushHistoryState(searchUrl) {
-    history.pushState({}, '', searchUrl);
-  }
-
-  /**
    * Clears any existing query timer and sets a new one to query in a moment.
    */
   function querySoon() {
     clearTimeout(waiter);
-    clearTimeout(historyWaiter);
     waiter = setTimeout(doQuery, timeouts.search);
   }
 
@@ -498,8 +490,6 @@ $(function() {
       }
     }
 
-    clearTimeout(historyWaiter);
-
     var query = $.trim(queryField.val());
     var pathFilter = $.trim(pathField.val());
 
@@ -526,7 +516,6 @@ $(function() {
       if (myRequestNumber > displayedRequestNumber) {
         displayedRequestNumber = myRequestNumber;
         populateResults(data, false, false);
-        historyWaiter = setTimeout(pushHistoryState, timeouts.history, searchUrl);
       }
       oneFewerRequest();
     })
@@ -594,38 +583,4 @@ $(function() {
   prettyDate.each(function() {
     $(this).text(formatDate($(this).data('datetime')));
   });
-
-  // Thanks to bug 63040 in Chrome, onpopstate is fired when the page reloads.
-  // That means that if we naively set onpopstate, we would get into an
-  // infinite loop of reloading whenever onpopstate is triggered. Therefore,
-  // we have to only add our onpopstate handler once the page has loaded.
-  window.onload = function() {
-    setTimeout(function() {
-      window.onpopstate = popStateHandler;
-    }, 0);
-  };
-
-  // Reload the page when we go back or forward.
-  function popStateHandler(event) {
-    // FIXME: This reloads the page when you navigate to #lineno.
-    window.onpopstate = null;
-    window.location.reload();
-  }
-
-  /**
-   * Replace 'source' with 'raw' in href, and set that to the background-image
-   */
-  function setBackgroundImageFromLink(anchorElement) {
-    var href = anchorElement.getAttribute('href');
-    // note: breaks if the tree's name is "source"
-    var bg_src = href.replace('source', 'raw');
-    anchorElement.style.backgroundImage = 'url(' + bg_src + ')';
-  }
-
-  window.addEventListener('load', function() {
-    $(".image").not('.too_fat').each(function() {
-      setBackgroundImageFromLink(this);
-    });
-  });
-
 });
