@@ -162,7 +162,7 @@ $("#scrolling").on('scroll', function() {
 
 $(function () {
   'use strict';
-  var container = $('#file');
+  var container = $('#scrolling');
   var lastModifierKey = null; // use this as a sort of canary/state indicator showing the last user action
   var singleLinesArray = []; //track single highlighted lines here
   var rangesArray = []; // track ranges of highlighted lines here
@@ -237,6 +237,23 @@ $(function () {
     }
     //return sorted arrays
     return [singleLinesArray.sort(sortAsc), rangesArray.sort(sortRangeAsc)];
+  }
+
+  function createSyntheticAnchor(id, scrollToIt) {
+    let gotoElt = document.getElementById(id);
+    if (!gotoElt) {
+      var firstLineno = id.split(/[,-]/)[0];
+      var elt = document.getElementById("l" + firstLineno);
+
+      gotoElt = document.createElement("div");
+      gotoElt.id = id;
+      gotoElt.className = "goto";
+      elt.appendChild(gotoElt);
+    }
+
+    if (scrollToIt) {
+      gotoElt.scrollIntoView();
+    }
   }
 
   /**
