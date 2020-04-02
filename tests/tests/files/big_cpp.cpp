@@ -206,6 +206,10 @@ class Human: public Thing {
   : Thing(HUMAN_HP) {
 
   }
+
+  void flinch() {
+    // humans can flinch!
+  }
 };
 
 /**
@@ -233,6 +237,22 @@ class Superhero : public Human {
     //     nope!
     //   ...
     // Superheroes don't take damage.
+    // ...
+    // But they do flinch.
+    flinch();
+  }
+};
+
+class OverpoweredSuperhero : public Superhero {
+  public:
+
+  OverpoweredSuperhero()
+  : Superhero() {
+
+  }
+
+  void takeDamage(int damage) override {
+    // Overpowered superheroes don't even flinch!
   }
 };
 
