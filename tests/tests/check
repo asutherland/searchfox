@@ -6,6 +6,17 @@ set -o pipefail # Check all commands in a pipeline
 
 date
 
+### CUSTOM CHECKS
+function fail {
+  set +x  # Turn off echoing of commands and output only relevant things to avoid bloating logfiles
+  echo -e "=========================================\n    FAILED INDEXING INTEGRITY CHECK\nError: $1\n========================================="
+  exit "${2-1}"  ## Return a code specified by $2 or 1 by default.
+}
+
+## Make sure that we didn't screw up newlines on header file interleaving
+## This does involve hard-coding of the path and should not be a standard thing.
+zgrep -q "}{" ~/index/tests/analysis/atom_list.h.gz && fail "There should only be one JSON blob per line."
+
 # We are passed in the name of the helper script to invoke to run each check.
 # The syntax is:
 #   "$@" <searchfox user exposed path> <canonical symbol name as found in data-symbols>
