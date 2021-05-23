@@ -16,26 +16,13 @@ async fn main() {
         }
     };
 
-    let mut cur_values = PipelineValues::Void;
+    let results = pipeline.run().await;
 
-    for cmd in pipeline.commands {
-        match cmd.execute(&pipeline.server, cur_values).await {
-            Ok(next_values) => {
-                cur_values = next_values;
-            }
-            Err(err) => {
-                println!("Pipeline Error!");
-                println!("{:?}", err);
-                return;
-            }
-        }
-    }
-
-    match cur_values {
-        PipelineValues::Void => {
+    match results {
+        Ok(PipelineValues::Void) => {
             println!("Void result.");
         }
-        PipelineValues::HtmlExcerpts(he) => {
+        Ok(PipelineValues::HtmlExcerpts(he)) => {
             for file_excerpts in he.by_file {
                 //println!("HTML excerpts from: {}", file_excerpts.file);
                 for str in file_excerpts.excerpts {
@@ -43,7 +30,7 @@ async fn main() {
                 }
             }
         }
-        PipelineValues::JsonRecords(jr) => {
+        Ok(PipelineValues::JsonRecords(jr)) => {
             for file_records in jr.by_file {
                 for value in file_records.records {
                     if output_format == OutputFormat::Concise {
@@ -55,6 +42,10 @@ async fn main() {
                     }
                 }
             }
+        },
+        Err(err) => {
+            println!("Pipeline Error!");
+            println!("{:?}", err);
         }
     }
 }
